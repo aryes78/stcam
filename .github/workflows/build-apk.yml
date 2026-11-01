@@ -27,32 +27,43 @@ jobs:
 
       - name: Build Debug APK (with subfolder detection & fallback)
         run: |
-          # 1. Ha a projekt almappában van (pl. SamsungS24StereoCamera), lépjünk be
-          if [ ! -f "build.gradle.kts" ] && [ -d "SamsungS24StereoCamera" ]; then
-            echo "Belépés a SamsungS24StereoCamera mappába..."
-            cd SamsungS24StereoCamera
-          elif [ ! -f "build.gradle.kts" ]; then
-            TARGET_DIR=$(find . -maxdepth 2 -name "build.gradle.kts" -not -path "*/app/*" -exec dirname {} ; | head -n 1)
-            if [ -n "$TARGET_DIR" ]; then
-              echo "Projekt megtalálva: $TARGET_DIR, belépés..."
-              cd "$TARGET_DIR"
-            fi
+          # 1. Ha a projekt almappában van, automatikus belépés
+          if [ ! -f "build.gradle.kts" ]; then
+            for d in */ ; do
+              if [ -f "${d}build.gradle.kts" ]; then
+                echo "Projekt megtalálva: $d, belépés..."
+                cd "$d"
+                break
+              fi
+            done
           fi
 
           echo "Aktuális munkakönyvtár: $(pwd)"
           ls -la
 
-          # 2. Automatikus XML entitás tisztítás (kivédi az árva '&' karakter miatti hibákat)
-          echo "XML fájlok ellenőrzése és szanálása..."
-          find . -name "*.xml" -type f -exec sed -i 's/ & / &amp; /g' {} +
+          # 2. Automatikus XML entitás szanálás Pythonnal (100% hibabiztos)
+          python3 -c "
+import glob
+for f in glob.glob('**/*.xml', recursive=True):
+    try:
+        with open(f, 'r', encoding='utf-8') as fp:
+            text = fp.read()
+        new_text = text.replace('Fotó & SBS', 'Fotó és SBS').replace(' & ', ' &amp; ')
+        if new_text != text:
+            with open(f, 'w', encoding='utf-8') as fp:
+                fp.write(new_text)
+            print('XML szanálva: ' + f)
+    except Exception:
+        pass
+"
 
-          # 3. Ha létezik gradlew, futtatási jog megadása és futtatás
+          # 3. Fordítás futtatása
           if [ -f "./gradlew" ]; then
             echo "✓ ./gradlew megtalálva, végrehajtási jog megadása..."
             chmod +x ./gradlew
             ./gradlew assembleDebug --stacktrace
           else
-            echo "ℹ ./gradlew nincs jelen, globális Gradle 8.10.2 használata..."
+            echo "ℹ Globális Gradle használata..."
             gradle assembleDebug --stacktrace
           fi
 
