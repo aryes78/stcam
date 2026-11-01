@@ -38,7 +38,7 @@
         android:id="@+id/btnOpenStereoCam"
         android:layout_width="match_parent"
         android:layout_height="60dp"
-        android:text="2. Sztereó Fényképező (Fotó & SBS)"
+        android:text="2. Sztereó Fényképező (Fotó és SBS)"
         android:backgroundTint="#059669"
         android:textColor="#FFFFFF"
         android:layout_marginBottom="16dp" />
