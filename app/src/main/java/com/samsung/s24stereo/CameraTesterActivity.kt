@@ -15,11 +15,8 @@ import androidx.appcompat.app.AppCompatActivity
  * Samsung Galaxy S24 Kamera Diagnosztikai és Felderítő Tesztalkalmazás
  * 
  * 1. Lekérdezi az összes elérhető logikai és fizikai kamerát.
- * 2. Ellenőrzi a REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA képességet.
- * 3. Vizsgálja a getConcurrentCameraIds() API által engedélyezett egyidejű kamerákat.
- * 4. Megkísérli a Főkamera (Wide) és a 3x Telefotó egyidejű csatlakozását mindkét módszerrel:
- *    - Módszer A: Külön Device megnyitása két független párhuzamos sessionben
- *    - Módszer B: Logikai "0"-s kamera megnyitása és két fizikai OutputConfiguration csatolása
+ * 2. Felderíti a [0]-s logikai kamera fizikai alegységeit (S24-en: 2 = UltraWide 2.2mm, 5 = Wide 5.4mm, 6 = Tele 7.0mm).
+ * 3. Teszteli a 'B' Módszert: Logikai Multi-Camera egyetlen CameraDevice alatti fizikai streamelés (OutputConfiguration.setPhysicalCameraId).
  */
 class CameraTesterActivity : AppCompatActivity() {
 
@@ -27,6 +24,9 @@ class CameraTesterActivity : AppCompatActivity() {
     private lateinit var btnStartTest: Button
     private lateinit var cameraManager: CameraManager
     private val backgroundHandler = Handler(Looper.getMainLooper())
+
+    private var widePhysicalId = "5"
+    private var telePhysicalId = "6"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -59,94 +59,110 @@ class CameraTesterActivity : AppCompatActivity() {
 
         try {
             val cameraIds = cameraManager.cameraIdList
-            log("1. ELÉRHETŐ LOGIKAI KAMERÁK SZÁMA: ${cameraIds.size}")
+            log("1. ELÉRHETŐ LOGIKAI KAMERÁK: ${cameraIds.size} db")
             
-            for (id in cameraIds) {
-                val chars = cameraManager.getCameraCharacteristics(id)
-                val facing = chars.get(CameraCharacteristics.LENS_FACING)
-                val facingStr = when (facing) {
-                    CameraCharacteristics.LENS_FACING_BACK -> "HÁTSÓ (BACK)"
-                    CameraCharacteristics.LENS_FACING_FRONT -> "ELSŐ (FRONT)"
-                    else -> "EGYÉB"
-                }
-                val focalLengths = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
-                val focalStr = focalLengths?.joinToString(", ") { "${it}mm" } ?: "N/A"
+            val chars0 = cameraManager.getCameraCharacteristics("0")
+            val capabilities = chars0.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: intArrayOf()
+            val isLogicalMulti = capabilities.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA)
+            
+            log("-> Kamera [0]: HÁTSÓ FŐKAMERA | Multi-kamera: ${if (isLogicalMulti) "IGEN" else "NEM"}")
 
-                val capabilities = chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: intArrayOf()
-                val isLogicalMulti = capabilities.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && isLogicalMulti) {
+                val physicalIds = chars0.physicalCameraIds
+                log("\n2. FIZIKAI ALEGYSÉGEK (Physical Sub-Cameras): ${physicalIds.joinToString(", ")}")
                 
-                log("-> Kamera ID: [$id] | Irány: $facingStr | Gyújtótáv: $focalStr | Multi-kamera: ${if (isLogicalMulti) "IGEN" else "NEM"}")
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && isLogicalMulti) {
-                    val physicalIds = chars.physicalCameraIds
-                    log("   Fizikai alegységek (Physical Sub-Cameras): ${physicalIds.joinToString(", ")}")
+                for (pId in physicalIds) {
+                    try {
+                        val pChars = chars0.getPhysicalCameraCharacteristics(pId)
+                        val focal = pChars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull() ?: 0f
+                        val role = when {
+                            focal < 3.0f -> "0.6× Ultraszéles (13mm ekv)"
+                            focal in 4.5f..6.0f -> {
+                                widePhysicalId = pId
+                                "1× Főkamera (24mm ekv) -> [SZTEREÓ BAL SZEM]"
+                            }
+                            focal > 6.0f -> {
+                                telePhysicalId = pId
+                                "3× Telefotó (67mm ekv) -> [SZTEREÓ JOBB SZEM]"
+                            }
+                            else -> "Egyéb"
+                        }
+                        log("   [ID: $pId] -> Gyújtótáv: ${focal}mm | Szerep: $role")
+                    } catch (e: Exception) {
+                        log("   [ID: $pId] -> Adatok olvasása: ${e.message}")
+                    }
                 }
             }
 
-            log("\n2. ANDROID CONCURRENT CAMERA STREAMING TESZT:")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                val concurrentSets = cameraManager.concurrentCameraIds
-                log("Egyidejűleg engedélyezett kameracsoportok (Concurrent sets): ${concurrentSets.size}")
-                for (set in concurrentSets) {
-                    log("   Engedélyezett párhuzamos készlet: ${set.joinToString(" + ")}")
-                }
-            } else {
-                log("   Concurrent Camera API nem elérhető (Android 11 alatti).")
-            }
-
-            log("\n3. FŐKAMERA (ID: 0) ÉS TELEFOTÓ (ID: 2) EGYIDEJŰ TESZTELÉSE...")
-            testSimultaneousAccess()
+            log("\n3. FIZIKAI MULTI-STREAM TESZT: Wide [$widePhysicalId] + Tele [$telePhysicalId]")
+            testLogicalMultiCameraStream()
 
         } catch (e: Exception) {
             log("HIBA A DIAGNOSZTIKA SORÁN: ${e.message}")
         }
     }
 
-    private fun testSimultaneousAccess() {
-        log("-> Próba: Főkamera (0) megnyitása...")
+    private fun testLogicalMultiCameraStream() {
+        log("-> Kamera [0] megnyitása fizikai al-streamekhez...")
         try {
             cameraManager.openCamera("0", object : CameraDevice.StateCallback() {
-                override fun onOpened(camera0: CameraDevice) {
-                    log("✓ Főkamera (0) SIKERESEN MEGNYITVA!")
-                    
-                    // Próbáljuk meg a Telefotó (ID 2) kamerát
-                    log("-> Próba: Telefotó (2) megnyitása párhuzamosan...")
-                    try {
-                        cameraManager.openCamera("2", object : CameraDevice.StateCallback() {
-                            override fun onOpened(camera2: CameraDevice) {
-                                log("★★★ SIKER! Mindkét kamera (0 és 2) egyidejűleg nyitva tartható! ★★★")
-                                log("A közvetlen párhuzamos sztereó felvétel 100%-ban támogatott ezen az S24 firmware-en!")
-                                camera2.close()
-                                camera0.close()
+                override fun onOpened(camera: CameraDevice) {
+                    log("✓ Logikai Kamera [0] SIKERESEN MEGNYITVA!")
+                    log("-> OutputConfiguration felépítése fizikai ID-kkal: Wide [$widePhysicalId] és Tele [$telePhysicalId]...")
+
+                    val readerWide = ImageReader.newInstance(1920, 1080, ImageFormat.JPEG, 2)
+                    val readerTele = ImageReader.newInstance(1920, 1080, ImageFormat.JPEG, 2)
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        try {
+                            val configWide = OutputConfiguration(readerWide.surface).apply {
+                                setPhysicalCameraId(widePhysicalId)
+                            }
+                            val configTele = OutputConfiguration(readerTele.surface).apply {
+                                setPhysicalCameraId(telePhysicalId)
                             }
 
-                            override fun onDisconnected(camera2: CameraDevice) {
-                                camera2.close()
-                                camera0.close()
-                            }
+                            val sessionConfig = SessionConfiguration(
+                                SessionConfiguration.SESSION_REGULAR,
+                                listOf(configWide, configTele),
+                                mainExecutor,
+                                object : CameraCaptureSession.StateCallback() {
+                                    override fun onConfigured(session: CameraCaptureSession) {
+                                        log("★★★ TELJES SIKER! ★★★")
+                                        log("A Samsung S24 hardveresen engedélyezi a Fő és a Telekamera egyidejű képfolyamát a 'B' módszerrel!")
+                                        log("Készen áll a 3D Sztereó Fényképező használatára.")
+                                        session.close()
+                                        camera.close()
+                                        readerWide.close()
+                                        readerTele.close()
+                                    }
 
-                            override fun onError(camera2: CameraDevice, error: Int) {
-                                log("Telefotó (2) nem nyitható meg párhuzamosan (Hiba kód: $error).")
-                                log("Ez tipikus Samsung biztonsági korlát. A 'B' Módszer (Logical Multi-Camera fizikai stream) lép érvénybe!")
-                                camera0.close()
-                            }
-                        }, backgroundHandler)
-                    } catch (e: Exception) {
-                        log("Kivétel a 2. kamera nyitásakor: ${e.message}")
-                        camera0.close()
+                                    override fun onConfigureFailed(session: CameraCaptureSession) {
+                                        log("A fizikai konfiguráció nem sikerült.")
+                                        camera.close()
+                                        readerWide.close()
+                                        readerTele.close()
+                                    }
+                                }
+                            )
+                            camera.createCaptureSession(sessionConfig)
+                        } catch (e: Exception) {
+                            log("Session hiba: ${e.message}")
+                            camera.close()
+                        }
+                    } else {
+                        log("API szint < 28")
+                        camera.close()
                     }
                 }
 
-                override fun onDisconnected(camera: CameraDevice) {
-                    camera.close()
-                }
-
+                override fun onDisconnected(camera: CameraDevice) { camera.close() }
                 override fun onError(camera: CameraDevice, error: Int) {
-                    log("Nem sikerült megnyitni a Főkamerát (0): Hiba kód $error")
+                    log("Nem sikerült megnyitni a kamerát (Hiba kód: $error)")
                 }
             }, backgroundHandler)
         } catch (e: SecurityException) {
-            log("Biztonsági hiba (nincs jogosultság): ${e.message}")
+            log("Biztonsági hiba: ${e.message}")
         }
     }
 }

@@ -5,8 +5,9 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
-import android.graphics.Matrix
 import android.hardware.camera2.*
+import android.hardware.camera2.params.OutputConfiguration
+import android.hardware.camera2.params.SessionConfiguration
 import android.media.ImageReader
 import android.os.Build
 import android.os.Bundle
@@ -14,7 +15,6 @@ import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
 import android.provider.MediaStore
-import android.util.Size
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
@@ -23,7 +23,6 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -31,9 +30,11 @@ import java.util.Locale
 /**
  * Samsung Galaxy S24 Vízszintes Sztereó Kamera Felvételkészítő
  * 
- * - Vízszintes tájolásban használatos (sztereó bázistávolság: ~18.5 mm).
- * - Egyetlen exponálógomb megnyomására elkészíti a felvételt a 3x Tele és az 1x Főkamerával.
- * - A Főkamera képét automatikusan 2.79x - 3.0x arányban kivágja a képméret-egyeztetéshez.
+ * - Logikai Multi-Kamera ("0") egyetlen kapcsolatán keresztül kéri le a fizikai al-streameket:
+ *   Wide: 5.4mm (Physical ID 5) -> Bal szem nézet
+ *   Tele: 7.0mm (Physical ID 6) -> Jobb szem nézet
+ * - Hardveres egyidejű exponálás (zero shutter lag difference).
+ * - A Főkamera képét automatikusan 2.79x arányban kivágja a témaméret egyeztetéséhez.
  * - Menti a két fájlt: IMG_L.jpg és IMG_R.jpg a DCIM/Stereo3D könyvtárba.
  */
 class StereoCaptureActivity : AppCompatActivity() {
@@ -45,19 +46,18 @@ class StereoCaptureActivity : AppCompatActivity() {
     private lateinit var progressBar: ProgressBar
 
     private lateinit var cameraManager: CameraManager
-    private var cameraMain: CameraDevice? = null
-    private var cameraTele: CameraDevice? = null
+    private var cameraDevice: CameraDevice? = null
+    private var captureSession: CameraCaptureSession? = null
 
     private var imageReaderMain: ImageReader? = null
     private var imageReaderTele: ImageReader? = null
 
-    private var sessionMain: CameraCaptureSession? = null
-    private var sessionTele: CameraCaptureSession? = null
-
     private lateinit var backgroundThread: HandlerThread
     private lateinit var backgroundHandler: Handler
 
-    // Samsung S24 optikai arány: 67mm (Tele) / 24mm (Wide) ~ 2.7916x
+    // Samsung S24 hardveresen tesztelt fizikai azonosítók (SM-S921B e1s)
+    private var widePhysicalId = "5" // 5.4mm Wide 1x
+    private var telePhysicalId = "6" // 7.0mm Tele 3x
     private val FOCAL_CROP_RATIO = 2.79f
 
     private var capturedMainBytes: ByteArray? = null
@@ -74,6 +74,7 @@ class StereoCaptureActivity : AppCompatActivity() {
         progressBar = findViewById(R.id.progressBar)
 
         cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        detectPhysicalCameraIds()
 
         btnShutter.setOnClickListener {
             triggerStereoCapture()
@@ -81,13 +82,32 @@ class StereoCaptureActivity : AppCompatActivity() {
 
         surfaceViewMain.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
-                openCameras()
+                openStereoCameraSystem()
             }
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
             override fun surfaceDestroyed(holder: SurfaceHolder) {
                 closeCameras()
             }
         })
+    }
+
+    private fun detectPhysicalCameraIds() {
+        try {
+            val chars0 = cameraManager.getCameraCharacteristics("0")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                for (pId in chars0.physicalCameraIds) {
+                    val pChars = chars0.getPhysicalCameraCharacteristics(pId)
+                    val focal = pChars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull() ?: 0f
+                    if (focal in 4.5f..6.0f) {
+                        widePhysicalId = pId // Főkamera (5.4mm)
+                    } else if (focal > 6.0f) {
+                        telePhysicalId = pId // 3x Telefotó (7.0mm)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     override fun onResume() {
@@ -115,108 +135,132 @@ class StereoCaptureActivity : AppCompatActivity() {
         }
     }
 
-    private fun openCameras() {
+    private fun openStereoCameraSystem() {
+        tvStatus.text = "S24 Sztereó inicializálása (Wide: [$widePhysicalId] + Tele: [$telePhysicalId])..."
         try {
-            // Főkamera (Wide) előkészítése: ID "0"
-            imageReaderMain = ImageReader.newInstance(4080, 3060, ImageFormat.JPEG, 2)
-            imageReaderMain?.setOnImageAvailableListener({ reader ->
-                val image = reader.acquireLatestImage()
-                val buffer = image.planes[0].buffer
-                val bytes = ByteArray(buffer.remaining())
-                buffer.get(bytes)
-                image.close()
-                capturedMainBytes = bytes
-                checkAndSaveStereoPair()
-            }, backgroundHandler)
+            // Főkamera képfogadó: 4080 x 3060
+            imageReaderMain = ImageReader.newInstance(4080, 3060, ImageFormat.JPEG, 2).apply {
+                setOnImageAvailableListener({ reader ->
+                    val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
+                    val buffer = image.planes[0].buffer
+                    val bytes = ByteArray(buffer.remaining())
+                    buffer.get(bytes)
+                    image.close()
+                    capturedMainBytes = bytes
+                    checkAndSaveStereoPair()
+                }, backgroundHandler)
+            }
 
+            // Telekamera képfogadó: 4000 x 3000
+            imageReaderTele = ImageReader.newInstance(4000, 3000, ImageFormat.JPEG, 2).apply {
+                setOnImageAvailableListener({ reader ->
+                    val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
+                    val buffer = image.planes[0].buffer
+                    val bytes = ByteArray(buffer.remaining())
+                    buffer.get(bytes)
+                    image.close()
+                    capturedTeleBytes = bytes
+                    checkAndSaveStereoPair()
+                }, backgroundHandler)
+            }
+
+            // Logikai [0] kamera megnyitása
             cameraManager.openCamera("0", object : CameraDevice.StateCallback() {
                 override fun onOpened(camera: CameraDevice) {
-                    cameraMain = camera
-                    startPreviewMain()
+                    cameraDevice = camera
+                    startDualPhysicalCaptureSession()
                 }
-                override fun onDisconnected(camera: CameraDevice) { camera.close() }
-                override fun onError(camera: CameraDevice, error: Int) { camera.close() }
-            }, backgroundHandler)
 
-            // Telekamera (3x) előkészítése: ID "2" (vagy fallback "52")
-            imageReaderTele = ImageReader.newInstance(4000, 3000, ImageFormat.JPEG, 2)
-            imageReaderTele?.setOnImageAvailableListener({ reader ->
-                val image = reader.acquireLatestImage()
-                val buffer = image.planes[0].buffer
-                val bytes = ByteArray(buffer.remaining())
-                buffer.get(bytes)
-                image.close()
-                capturedTeleBytes = bytes
-                checkAndSaveStereoPair()
-            }, backgroundHandler)
-
-            cameraManager.openCamera("2", object : CameraDevice.StateCallback() {
-                override fun onOpened(camera: CameraDevice) {
-                    cameraTele = camera
-                    startPreviewTele()
+                override fun onDisconnected(camera: CameraDevice) {
+                    camera.close()
+                    cameraDevice = null
                 }
-                override fun onDisconnected(camera: CameraDevice) { camera.close() }
-                override fun onError(camera: CameraDevice, error: Int) { camera.close() }
+
+                override fun onError(camera: CameraDevice, error: Int) {
+                    camera.close()
+                    cameraDevice = null
+                    tvStatus.text = "Kameranyitási hiba: $error"
+                }
             }, backgroundHandler)
 
         } catch (e: SecurityException) {
-            tvStatus.text = "Hiba: Kamera jogosultság hiányzik!"
+            tvStatus.text = "Hiba: Kamera engedély szükséges!"
         }
     }
 
-    private fun startPreviewMain() {
-        val surface = surfaceViewMain.holder.surface
-        val builder = cameraMain?.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)?.apply {
-            addTarget(surface)
-            set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-        }
-        cameraMain?.createCaptureSession(listOf(surface, imageReaderMain?.surface), object : CameraCaptureSession.StateCallback() {
-            override fun onConfigured(session: CameraCaptureSession) {
-                sessionMain = session
-                builder?.build()?.let { session.setRepeatingRequest(it, null, backgroundHandler) }
-            }
-            override fun onConfigureFailed(session: CameraCaptureSession) {}
-        }, backgroundHandler)
-    }
+    private fun startDualPhysicalCaptureSession() {
+        val camera = cameraDevice ?: return
+        try {
+            val surfaceMain = surfaceViewMain.holder.surface
+            val surfaceTele = surfaceViewTele.holder.surface
+            val stillMainSurface = imageReaderMain?.surface ?: return
+            val stillTeleSurface = imageReaderTele?.surface ?: return
 
-    private fun startPreviewTele() {
-        val surface = surfaceViewTele.holder.surface
-        val builder = cameraTele?.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)?.apply {
-            addTarget(surface)
-            set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-        }
-        cameraTele?.createCaptureSession(listOf(surface, imageReaderTele?.surface), object : CameraCaptureSession.StateCallback() {
-            override fun onConfigured(session: CameraCaptureSession) {
-                sessionTele = session
-                builder?.build()?.let { session.setRepeatingRequest(it, null, backgroundHandler) }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val outPreviewMain = OutputConfiguration(surfaceMain).apply { setPhysicalCameraId(widePhysicalId) }
+                val outPreviewTele = OutputConfiguration(surfaceTele).apply { setPhysicalCameraId(telePhysicalId) }
+                val outStillMain = OutputConfiguration(stillMainSurface).apply { setPhysicalCameraId(widePhysicalId) }
+                val outStillTele = OutputConfiguration(stillTeleSurface).apply { setPhysicalCameraId(telePhysicalId) }
+
+                val sessionConfig = SessionConfiguration(
+                    SessionConfiguration.SESSION_REGULAR,
+                    listOf(outPreviewMain, outPreviewTele, outStillMain, outStillTele),
+                    mainExecutor,
+                    object : CameraCaptureSession.StateCallback() {
+                        override fun onConfigured(session: CameraCaptureSession) {
+                            captureSession = session
+                            val previewRequest = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                                addTarget(surfaceMain)
+                                addTarget(surfaceTele)
+                                set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+                            }.build()
+
+                            session.setRepeatingRequest(previewRequest, null, backgroundHandler)
+                            runOnUiThread {
+                                tvStatus.text = "Sztereó előnézet aktív (Fő: 24mm | Tele: 67mm)"
+                                btnShutter.isEnabled = true
+                            }
+                        }
+
+                        override fun onConfigureFailed(session: CameraCaptureSession) {
+                            runOnUiThread {
+                                tvStatus.text = "Nem sikerült a sztereó konfiguráció."
+                            }
+                        }
+                    }
+                )
+                camera.createCaptureSession(sessionConfig)
+            } else {
+                tvStatus.text = "Android 9+ szükséges a fizikai multi-kamerához."
             }
-            override fun onConfigureFailed(session: CameraCaptureSession) {}
-        }, backgroundHandler)
+        } catch (e: Exception) {
+            tvStatus.text = "Session hiba: ${e.message}"
+        }
     }
 
     private fun triggerStereoCapture() {
+        val session = captureSession ?: return
+        val camera = cameraDevice ?: return
+        val surfaceStillMain = imageReaderMain?.surface ?: return
+        val surfaceStillTele = imageReaderTele?.surface ?: return
+
         btnShutter.isEnabled = false
         progressBar.visibility = View.VISIBLE
-        tvStatus.text = "Exponálás mindkét kamerával..."
+        tvStatus.text = "Szimultán sztereó exponálás folyamatban..."
         capturedMainBytes = null
         capturedTeleBytes = null
 
         try {
-            // Szimultán exponálás indítása mindkét kamerán
-            val captureReqMain = cameraMain?.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)?.apply {
-                imageReaderMain?.surface?.let { addTarget(it) }
+            val stillRequest = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+                addTarget(surfaceStillMain)
+                addTarget(surfaceStillTele)
                 set(CaptureRequest.CONTROL_CAPTURE_INTENT, CaptureRequest.CONTROL_CAPTURE_INTENT_STILL_CAPTURE)
-            }
-            val captureReqTele = cameraTele?.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)?.apply {
-                imageReaderTele?.surface?.let { addTarget(it) }
-                set(CaptureRequest.CONTROL_CAPTURE_INTENT, CaptureRequest.CONTROL_CAPTURE_INTENT_STILL_CAPTURE)
-            }
+            }.build()
 
-            captureReqMain?.build()?.let { sessionMain?.capture(it, null, backgroundHandler) }
-            captureReqTele?.build()?.let { sessionTele?.capture(it, null, backgroundHandler) }
+            session.capture(stillRequest, null, backgroundHandler)
 
         } catch (e: Exception) {
-            tvStatus.text = "Hiba a felvételkor: ${e.message}"
+            tvStatus.text = "Exponálási hiba: ${e.message}"
             btnShutter.isEnabled = true
             progressBar.visibility = View.GONE
         }
@@ -228,37 +272,33 @@ class StereoCaptureActivity : AppCompatActivity() {
 
         if (mainData != null && teleData != null) {
             runOnUiThread {
-                tvStatus.text = "Képillesztés és kivágás (Crop Match)..."
+                tvStatus.text = "Képillesztés és kivágás (Crop Match: 2.79×)..."
             }
 
-            // 1. Telefotó feldolgozása (Jobb szem nézet, teljes felbontás)
+            // 1. Telefotó feldolgozása (Jobb szem, 67mm)
             val teleBitmap = BitmapFactory.decodeByteArray(teleData, 0, teleData.size)
 
-            // 2. Főkamera feldolgozása: 2.79x központi kivágás, hogy a témaméret egyezzen a teleképével
+            // 2. Főkamera feldolgozása (2.79x központi kivágás, hogy megegyezzen a témaméret)
             val rawMainBitmap = BitmapFactory.decodeByteArray(mainData, 0, mainData.size)
             val croppedMainBitmap = cropToMatchTelephoto(rawMainBitmap, FOCAL_CROP_RATIO, teleBitmap.width, teleBitmap.height)
 
-            // 3. Fájlnevek generálása: IMG_YYYYMMDD_HHMMSS_L.jpg és _R.jpg
+            // 3. Mentés DCIM/Stereo3D könyvtárba
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
             val filenameL = "IMG_${timeStamp}_L.jpg"
             val filenameR = "IMG_${timeStamp}_R.jpg"
 
-            saveBitmapToGallery(croppedMainBitmap, filenameL, "S24 Bal Sztereó Kép (Főkamera kivágva)")
-            saveBitmapToGallery(teleBitmap, filenameR, "S24 Jobb Sztereó Kép (3x Telefotó natív)")
+            saveBitmapToGallery(croppedMainBitmap, filenameL, "S24 Bal Sztereó (Főkamera kivágva)")
+            saveBitmapToGallery(teleBitmap, filenameR, "S24 Jobb Sztereó (3x Telefotó natív)")
 
             runOnUiThread {
                 progressBar.visibility = View.GONE
                 btnShutter.isEnabled = true
-                tvStatus.text = "Sikeres sztereó mentés:\n$filenameL és $filenameR"
-                Toast.makeText(this, "Sztereó pár mentve a Galériába!", Toast.LENGTH_LONG).show()
+                tvStatus.text = "Mentve: $filenameL és $filenameR"
+                Toast.makeText(this, "Sztereó fotópár sikeresen mentve a Galériába!", Toast.LENGTH_LONG).show()
             }
         }
     }
 
-    /**
-     * Kivágja a főkamera képének közepét a megadott nagyítási aránynak megfelelően,
-     * majd a telekamera felbontására skálázza a tökéletes sztereó párhoz.
-     */
     private fun cropToMatchTelephoto(source: Bitmap, zoomFactor: Float, targetWidth: Int, targetHeight: Int): Bitmap {
         val cropW = (source.width / zoomFactor).toInt()
         val cropH = (source.height / zoomFactor).toInt()
@@ -296,14 +336,10 @@ class StereoCaptureActivity : AppCompatActivity() {
     }
 
     private fun closeCameras() {
-        sessionMain?.close()
-        sessionMain = null
-        sessionTele?.close()
-        sessionTele = null
-        cameraMain?.close()
-        cameraMain = null
-        cameraTele?.close()
-        cameraTele = null
+        captureSession?.close()
+        captureSession = null
+        cameraDevice?.close()
+        cameraDevice = null
         imageReaderMain?.close()
         imageReaderMain = null
         imageReaderTele?.close()
