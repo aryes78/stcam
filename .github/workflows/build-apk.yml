@@ -1,12 +1,10 @@
-name: Build Samsung S24 Stereo Camera APK
+name: Samsung S24 Stereo Camera - Unpack & Build APK
 
 on:
   push:
     branches: [ main, master ]
     tags:
       - 'v*'
-  pull_request:
-    branches: [ main, master ]
   workflow_dispatch:
 
 permissions:
@@ -16,72 +14,122 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Wait 30 seconds for other workflows to unpack files
-        run: |
-          echo "Várakozás 30 másodpercig, amíg a másik workflow befejezi a kicsomagolást..."
-          sleep 30
-
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Ensure gradle files are ready
+      # 1. KICSOMAGOLÁS, CLEANUP ÉS AUTOMATIKUS GIT COMMIT + PUSH
+      - name: Unpack zip, update repo and prepare source
         run: |
-          if [ ! -f "gradlew" ] && [ -d "SamsungS24StereoCamera" ]; then
-            cd SamsungS24StereoCamera
-          fi
-          if [ ! -f "gradlew" ]; then
-            echo "gradlew nem található, keresés a csomagolt zip fájlokban..."
-            ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
-            if [ -n "$ZIP_FILE" ]; then
-              echo "Automatikus kibontás: $ZIP_FILE"
-              unzip -o "$ZIP_FILE"
+          ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
+          if [ -n "$ZIP_FILE" ]; then
+            echo "=========================================================="
+            echo "Feltöltött ZIP fájl észlelve: $ZIP_FILE"
+            echo "Kicsomagolás folyamatban a munkakönyvtárba..."
+            echo "=========================================================="
+            
+            # Kicsomagolás felülírással a gyökérbe, védve a workflow fájlokat
+            unzip -o "$ZIP_FILE" -d . -x ".github/workflows/*"
+            rm -f "$ZIP_FILE"
+            echo "ZIP sikeresen kibontva és az archívum törölve."
+
+            # Ha a tartalom almappában volt (pl. SamsungS24StereoCamera vagy android-app)
+            if [ ! -f "gradlew" ]; then
+              SUBDIR=$(find . -maxdepth 2 -name "gradlew" -exec dirname {} \; | head -n 1)
+              if [ -n "$SUBDIR" ] && [ "$SUBDIR" != "." ]; then
+                echo "Forráskód felmozgatása almappából ($SUBDIR) a gyökérbe..."
+                cp -r $SUBDIR/* .
+              fi
+            fi
+
+            # Git commit és push a kibontott tiszta forráskódhoz
+            git config --local user.email "github-actions@users.noreply.github.com"
+            git config --local user.name "github-actions"
+            git add -A
+
+            if git status --porcelain | grep -q .; then
+              echo "A kibontott új fájlok committolása a repóba..."
+              git commit -m "Automatikus kicsomagolás: forráskód frissítése [skip ci]"
+              git push origin ${{ github.ref_name }} || git push origin HEAD:${{ github.ref_name }} || true
+              echo "A frissített forráskód sikeresen feltöltve a távoli repóba!"
+            else
+              echo "Nem történt fájlváltozás, nincs szükség commitra."
+            fi
+          else
+            echo "Nem található feltöltött zip fájl, a repóban lévő meglévő forráskódból építünk."
+            
+            if [ ! -f "gradlew" ]; then
+              SUBDIR=$(find . -maxdepth 2 -name "gradlew" -exec dirname {} \; | head -n 1)
+              if [ -n "$SUBDIR" ] && [ "$SUBDIR" != "." ]; then
+                echo "Forráskód felmozgatása almappából ($SUBDIR) a gyökérbe..."
+                cp -r $SUBDIR/* .
+              fi
             fi
           fi
 
+          chmod +x ./gradlew || true
+
+      # 2. JAVA 17 KÖRNYEZET
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
+      # 3. GRADLE KÖRNYEZET
       - name: Set up Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
 
+      # 4. APK ÉPÍTÉSE A FRISSEN KICSOMAGOLT KÓDBÓL
       - name: Build Debug APK
         run: |
-          if [ ! -f "gradlew" ] && [ -d "SamsungS24StereoCamera" ]; then
-            cd SamsungS24StereoCamera
-          fi
           chmod +x ./gradlew
           ./gradlew assembleDebug --stacktrace
 
+      # 5. S24StereoCamera.apk ÁTNEVEZÉSE
+      - name: Prepare S24StereoCamera.apk
+        run: |
+          mkdir -p dist-apk
+          APK_FOUND=$(find app/build/outputs/apk/ -name "*.apk" | head -n 1)
+          if [ -z "$APK_FOUND" ]; then
+            APK_FOUND=$(find . -name "*.apk" | head -n 1)
+          fi
+
+          if [ -n "$APK_FOUND" ]; then
+            cp "$APK_FOUND" dist-apk/S24StereoCamera.apk
+            echo "Sikeres átnevezés: dist-apk/S24StereoCamera.apk"
+          else
+            echo "HIBA: Nem található lefordított apk fájl!"
+            exit 1
+          fi
+
+      # 6. ARTIFACT FELTÖLTÉSE
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Samsung-S24-Stereo-Camera-Debug-APK
-          path: '**/build/outputs/apk/debug/*.apk'
+          name: S24StereoCamera-APK
+          path: dist-apk/S24StereoCamera.apk
 
-      # Automata GitHub Release létrehozása és APK csatolása
-      - name: Create GitHub Release with APK
+      # 7. GITHUB RELEASE LÉTREHOZÁSA S24StereoCamera.apk CSATOLMÁNNYAL
+      - name: Create GitHub Release with S24StereoCamera.apk
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         continue-on-error: true
         with:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'latest' }}
-          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'Samsung S24 Sztereó Kamera (Legfrissebb APK)' }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'Samsung S24 Sztereó Kamera (v1.1.0)' }}
           body: |
-            Automata APK kiadás a Samsung Galaxy S24 sztereó videó- és fényképező alkalmazáshoz.
-            - Full HD 1080p @ 30fps
-            - Hardveres 2.79x központi zoom a főkamerára
-            - OIS (optikai stabilizátor) kikapcsolva a merev, párhuzamos sztereó tengelyért
-            - Tiszta, zavartalan képernyőnézet
+            Samsung Galaxy S24 sztereó videó- és fotóalkalmazás.
+            - Telepítő fájl: **S24StereoCamera.apk**
+            - Felbontás: Full HD 1080p @ 30fps
+            - Főkamera: Hardveres 2.79x központi kivágás (Bayer 4-pixel igazítással a tiszta színekért)
+            - OIS (képstabilizátor): Kikapcsolva a merev, stabil sztereó tengelyért
           draft: false
           prerelease: false
           files: |
-            **/build/outputs/apk/debug/*.apk
+            dist-apk/S24StereoCamera.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
