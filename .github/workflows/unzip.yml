@@ -7,9 +7,10 @@ on:
 jobs:
   unzip:
     runs-on: ubuntu-latest
+    # A jogosultságokat közvetlenül a jobon belül adjuk meg:
     permissions:
-      contents: write   # Jog a fájlok módosításához
-      workflows: write  # KIFEJEZETT JOG a .github/workflows/ mappához!
+      contents: write
+      actions: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
