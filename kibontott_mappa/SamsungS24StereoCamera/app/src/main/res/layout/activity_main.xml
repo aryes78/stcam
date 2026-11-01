@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="24dp"
+    android:background="#121316">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Samsung S24 Sztereó 3D"
+        android:textSize="26sp"
+        android:textStyle="bold"
+        android:textColor="#FFFFFF"
+        android:layout_marginBottom="8dp" />
+
+    <TextView
+        android:id="@+id/tvDeviceInfo"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Eszköz információ..."
+        android:textSize="14sp"
+        android:textColor="#9CA3AF"
+        android:layout_marginBottom="32dp" />
+
+    <Button
+        android:id="@+id/btnRunDiagnostic"
+        android:layout_width="match_parent"
+        android:layout_height="60dp"
+        android:text="1. Kamera Hardverteszt (Diagnosztika)"
+        android:backgroundTint="#2563EB"
+        android:textColor="#FFFFFF"
+        android:layout_marginBottom="16dp" />
+
+    <Button
+        android:id="@+id/btnOpenStereoCam"
+        android:layout_width="match_parent"
+        android:layout_height="60dp"
+        android:text="2. Sztereó Fényképező Megnyitása"
+        android:backgroundTint="#059669"
+        android:textColor="#FFFFFF"
+        android:layout_marginBottom="24dp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Tipp: A sztereó fotózáshoz tartsa a telefont vízszintesen! Az exponáláskor a főkamera és a 3x telekamera egyszerre készít képet."
+        android:textSize="12sp"
+        android:textColor="#6B7280"
+        android:gravity="center" />
+
+</LinearLayout>
