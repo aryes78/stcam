@@ -1,12 +1,15 @@
-# Samsung Galaxy S24 Sztereó 3D Fényképező Projekt
+# Samsung Galaxy S24 Sztereó 3D Fényképező & Videófelvevő Projekt
 
-Ez a projekt kifejezetten a **Samsung Galaxy S24** telefon hardverére készült, hogy az 1× Főkamerával és a 3× Telekamerával szimultán (egyidejűleg) sztereó fotópárt rögzítsen vízszintes tartásban.
+Ez a projekt kifejezetten a **Samsung Galaxy S24** telefon hardverére készült, hogy az 1× Főkamerával és a 3× Telekamerával szimultán (egyidejűleg) sztereó fotópárt és sztereó videópárt rögzítsen vízszintes tartásban.
 
 ## Fő funkciók
-1. **Kamera Hardverteszt (CameraTesterActivity)**: Felderíti a telefon összes fizikai lencséjét, kiolvassa a `CameraManager.getConcurrentCameraIds()` listát, és megvizsgálja a Fő- és Telekamera egyidejű megnyithatóságát.
-2. **Sztereó Kamera (StereoCaptureActivity)**: Vízszintes nézetben egyetlen exponálással készíti el mindkét képet.
-3. **Automatikus Crop Match**: A 24 mm főkamera képéből 2.79×-es kivágást készít, így a téma mérete pixelre pontosan egyezik a 67 mm-es telekamera képével.
-4. **Fájlmentés**: `IMG_L.jpg` és `IMG_R.jpg` mentése a telefon `DCIM/Stereo3D` mappájába.
+1. **Kamera Hardverteszt (CameraTesterActivity)**: Felderíti a telefon összes fizikai lencséjét, kiolvassa a `CameraManager.getConcurrentCameraIds()` listát, és megvizsgálja a Fő- és Telekamera egyidejű megnyithatóságát a 'B' módszerrel (Logical Multi-Camera fizikai streamelés).
+2. **Sztereó Fényképező (StereoCaptureActivity)**: Vízszintes nézetben egyetlen exponálással készíti el mindkét képet szinkronban.
+   - **Automatikus Side-by-Side (SBS) összefűzés**: Automatikusan generál egy közös `IMG_YYYYMMDD_HHMMSS_SBS.jpg` 3D fotót VR szemüvegekhez és 3D kijelzőkhöz, miközben a különálló `IMG_L.jpg` és `IMG_R.jpg` fájlokat is elmenti a `DCIM/Stereo3D` albumba.
+   - **Garantált felületi stabilitás**: Megszünteti a Camera2 „Surface abandoned” hibát párhuzamos felület-életciklus kezeléssel és rögzített felbontású bufferekkel.
+3. **Sztereó Videófelvevő (StereoVideoActivity)**: 
+   - **Hardveres Képméret-Egyeztetés (ISP Scaler Crop)**: A főkamera videofolyamára a Samsung ISP hardveres 2.79×-es kivágást (`CaptureRequest.SCALER_CROP_REGION`) alkalmaz valós időben 0% processzorterheléssel, így a videón a bal és jobb szem témamérete PIXELRE PONTOSAN megegyezik a 3× telekamerával!
+   - **Szinkronizált Dupla MP4**: `VID_L.mp4` (bal szem + hang) és `VID_R.mp4` (jobb szem) a `Movies/Stereo3D` albumba kerül rögzítésre.
 
 ## Hogyan kaphatok közvetlen APK-t?
 

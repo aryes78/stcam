@@ -38,8 +38,17 @@
         android:id="@+id/btnOpenStereoCam"
         android:layout_width="match_parent"
         android:layout_height="60dp"
-        android:text="2. Sztereó Fényképező Megnyitása"
+        android:text="2. Sztereó Fényképező (Fotó & SBS)"
         android:backgroundTint="#059669"
+        android:textColor="#FFFFFF"
+        android:layout_marginBottom="16dp" />
+
+    <Button
+        android:id="@+id/btnOpenStereoVideo"
+        android:layout_width="match_parent"
+        android:layout_height="60dp"
+        android:text="3. Sztereó Videófelvevő (Dupla MP4)"
+        android:backgroundTint="#DC2626"
         android:textColor="#FFFFFF"
         android:layout_marginBottom="24dp" />
 

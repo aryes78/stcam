@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Hardveres kamera hozzáférések -->
+    <!-- Hardveres kamera és hang hozzáférések -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.VIBRATE" />
 
     <!-- Hardver követelmények: Camera2 API és többkamera támogatás -->
@@ -39,11 +41,19 @@
             android:label="S24 Kamera Hardverteszt"
             android:screenOrientation="portrait" />
 
-        <!-- 2. Lépés: Valós idejű Vízszintes Sztereó Fényképező -->
+        <!-- 2. Lépés: Valós idejű Vízszintes Sztereó Fényképező & SBS készítő -->
         <activity
             android:name=".StereoCaptureActivity"
             android:exported="false"
             android:label="Sztereó Felvétel"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize" />
+
+        <!-- 3. Lépés: Valós idejű Vízszintes Sztereó Videófelvevő (Szinkronizált Dupla MP4) -->
+        <activity
+            android:name=".StereoVideoActivity"
+            android:exported="false"
+            android:label="Sztereó Videó"
             android:screenOrientation="landscape"
             android:configChanges="orientation|screenSize" />
 

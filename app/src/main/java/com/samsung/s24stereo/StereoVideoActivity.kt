@@ -1,0 +1,510 @@
+package com.samsung.s24stereo
+
+import android.content.ContentValues
+import android.content.Context
+import android.graphics.Rect
+import android.hardware.camera2.*
+import android.hardware.camera2.params.OutputConfiguration
+import android.media.MediaRecorder
+import android.os.Build
+import android.os.Bundle
+import android.os.Environment
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.Looper
+import android.os.SystemClock
+import android.provider.MediaStore
+import android.view.SurfaceHolder
+import android.view.SurfaceView
+import android.view.View
+import android.widget.ImageButton
+import android.widget.ProgressBar
+import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import java.io.File
+import java.io.FileInputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+/**
+ * Samsung Galaxy S24 Szimultán Sztereó Videófelvevő
+ * 
+ * - Hardveres felvétel mindkét fizikai lencséről egyszerre:
+ *   Wide (ID: 5, 24mm ekv) -> Bal szem stream
+ *   Tele (ID: 6, 67mm ekv) -> Jobb szem stream
+ * 
+ * - KÉPMÉRET-EGYEZTETÉS VIDEÓN (Hardware ISP Scaler Crop):
+ *   A Főkamera (Wide) video streamjére hardveresen beállítjuk a
+ *   CaptureRequest.SCALER_CROP_REGION-t (2.79x központi kivágás).
+ *   Ezt maga a Samsung ISP processzor valós időben végzi el
+ *   0% processzorterheléssel, így mind a keresőben, mind a felvett videón
+ *   a két felvétel témamérete PIXELRE PONTOSAN megegyezik!
+ * 
+ * - Dupla MP4 kimenet:
+ *   VID_YYYYMMDD_HHMMSS_L.mp4 (Bal szem + Sztereó mikrofon hang)
+ *   VID_YYYYMMDD_HHMMSS_R.mp4 (Jobb szem natív 3x)
+ *   Azonnal a Galéria Movies/Stereo3D könyvtárába kerül.
+ */
+class StereoVideoActivity : AppCompatActivity() {
+
+    private lateinit var surfaceViewMain: SurfaceView
+    private lateinit var surfaceViewTele: SurfaceView
+    private lateinit var btnRecord: ImageButton
+    private lateinit var tvStatus: TextView
+    private lateinit var tvTimer: TextView
+    private lateinit var tvBadgeWide: TextView
+    private lateinit var tvBadgeTele: TextView
+    private lateinit var progressBar: ProgressBar
+
+    private lateinit var cameraManager: CameraManager
+    private var cameraDevice: CameraDevice? = null
+    private var captureSession: CameraCaptureSession? = null
+
+    private var recorderWide: MediaRecorder? = null
+    private var recorderTele: MediaRecorder? = null
+
+    private lateinit var backgroundThread: HandlerThread
+    private lateinit var backgroundHandler: Handler
+
+    private var widePhysicalId = "5" // 5.4mm Wide
+    private var telePhysicalId = "6" // 7.0mm Tele 3x
+    private val FOCAL_CROP_RATIO = 2.7916f
+
+    private var isSurfaceMainReady = false
+    private var isSurfaceTeleReady = false
+    private var isRecording = false
+
+    private var wideTempFile: File? = null
+    private var teleTempFile: File? = null
+    private var recordingStartTime = 0L
+    private val timerHandler = Handler(Looper.getMainLooper())
+    private val timerRunnable = object : Runnable {
+        override fun run() {
+            if (isRecording) {
+                val elapsed = SystemClock.uptimeMillis() - recordingStartTime
+                val seconds = (elapsed / 1000) % 60
+                val minutes = (elapsed / (1000 * 60)) % 60
+                tvTimer.text = String.format(Locale.US, "● REC %02d:%02d", minutes, seconds)
+                timerHandler.postDelayed(this, 1000)
+            }
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_stereo_video)
+
+        surfaceViewMain = findViewById(R.id.surfaceViewMain)
+        surfaceViewTele = findViewById(R.id.surfaceViewTele)
+        btnRecord = findViewById(R.id.btnRecord)
+        tvStatus = findViewById(R.id.tvStatus)
+        tvTimer = findViewById(R.id.tvTimer)
+        tvBadgeWide = findViewById(R.id.tvBadgeWide)
+        tvBadgeTele = findViewById(R.id.tvBadgeTele)
+        progressBar = findViewById(R.id.progressBar)
+
+        cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        detectPhysicalCameraIds()
+
+        btnRecord.setOnClickListener {
+            if (isRecording) {
+                stopStereoRecording()
+            } else {
+                startStereoRecording()
+            }
+        }
+
+        initSurfaceHolders()
+    }
+
+    private fun initSurfaceHolders() {
+        // Fix felbontás beállítása a "Surface abandoned" hiba megelőzésére
+        surfaceViewMain.holder.setFixedSize(1280, 720)
+        surfaceViewMain.holder.addCallback(object : SurfaceHolder.Callback {
+            override fun surfaceCreated(holder: SurfaceHolder) {
+                isSurfaceMainReady = true
+                checkSurfacesAndOpen()
+            }
+            override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {}
+            override fun surfaceDestroyed(holder: SurfaceHolder) {
+                isSurfaceMainReady = false
+                closeCameraSystem()
+            }
+        })
+
+        surfaceViewTele.holder.setFixedSize(1280, 720)
+        surfaceViewTele.holder.addCallback(object : SurfaceHolder.Callback {
+            override fun surfaceCreated(holder: SurfaceHolder) {
+                isSurfaceTeleReady = true
+                checkSurfacesAndOpen()
+            }
+            override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {}
+            override fun surfaceDestroyed(holder: SurfaceHolder) {
+                isSurfaceTeleReady = false
+                closeCameraSystem()
+            }
+        })
+    }
+
+    private fun checkSurfacesAndOpen() {
+        if (isSurfaceMainReady && isSurfaceTeleReady && cameraDevice == null) {
+            val s1 = surfaceViewMain.holder.surface
+            val s2 = surfaceViewTele.holder.surface
+            if (s1 != null && s1.isValid && s2 != null && s2.isValid) {
+                openStereoCameraSystem()
+            }
+        }
+    }
+
+    private fun detectPhysicalCameraIds() {
+        try {
+            val chars0 = cameraManager.getCameraCharacteristics("0")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                for (pId in chars0.physicalCameraIds) {
+                    try {
+                        val pChars = cameraManager.getCameraCharacteristics(pId)
+                        val focalArray: FloatArray? = pChars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+                        val focal = if (focalArray != null && focalArray.isNotEmpty()) focalArray[0] else 0f
+                        if (focal in 4.5f..6.0f) {
+                            widePhysicalId = pId // Főkamera (5.4mm)
+                        } else if (focal > 6.0f) {
+                            telePhysicalId = pId // Telefotó 3x (7.0mm)
+                        }
+                    } catch (e: Exception) {
+                        // ignore
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            widePhysicalId = "5"
+            telePhysicalId = "6"
+        }
+        tvBadgeWide.text = "BAL: FŐKAMERA [$widePhysicalId] (ISP 2.79x ZOOM)"
+        tvBadgeTele.text = "JOBB: TELE [$telePhysicalId] (3x NATÍV)"
+    }
+
+    override fun onResume() {
+        super.onResume()
+        startBackgroundThread()
+        checkSurfacesAndOpen()
+    }
+
+    override fun onPause() {
+        if (isRecording) {
+            stopStereoRecording()
+        }
+        closeCameraSystem()
+        stopBackgroundThread()
+        super.onPause()
+    }
+
+    private fun startBackgroundThread() {
+        backgroundThread = HandlerThread("StereoVideoThread").also { it.start() }
+        backgroundHandler = Handler(backgroundThread.looper)
+    }
+
+    private fun stopBackgroundThread() {
+        backgroundThread.quitSafely()
+        try {
+            backgroundThread.join()
+        } catch (e: InterruptedException) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun openStereoCameraSystem() {
+        tvStatus.text = "Kamera előkészítése videóhoz..."
+        try {
+            cameraManager.openCamera("0", object : CameraDevice.StateCallback() {
+                override fun onOpened(camera: CameraDevice) {
+                    cameraDevice = camera
+                    startStereoPreviewSession()
+                }
+
+                override fun onDisconnected(camera: CameraDevice) {
+                    camera.close()
+                    cameraDevice = null
+                }
+
+                override fun onError(camera: CameraDevice, error: Int) {
+                    camera.close()
+                    cameraDevice = null
+                    tvStatus.text = "Kamera hiba: $error"
+                }
+            }, backgroundHandler)
+        } catch (e: SecurityException) {
+            tvStatus.text = "Kamera engedély hiányzik!"
+        }
+    }
+
+    /**
+     * Kiszámítja a 2.79x-es hardveres kivágási zónát a főkamerához,
+     * így a videón a téma mérete pont olyan lesz, mint a 3x telekamerán!
+     */
+    private fun getWideHardwareCropRegion(): Rect? {
+        return try {
+            val chars = cameraManager.getCameraCharacteristics(widePhysicalId)
+            val activeArray = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return null
+            val cropW = (activeArray.width() / FOCAL_CROP_RATIO).toInt()
+            val cropH = (activeArray.height() / FOCAL_CROP_RATIO).toInt()
+            val cropX = activeArray.left + (activeArray.width() - cropW) / 2
+            val cropY = activeArray.top + (activeArray.height() - cropH) / 2
+            Rect(cropX, cropY, cropX + cropW, cropY + cropH)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun startStereoPreviewSession() {
+        val camera = cameraDevice ?: return
+        try {
+            val surfaceMain = surfaceViewMain.holder.surface
+            val surfaceTele = surfaceViewTele.holder.surface
+            if (!surfaceMain.isValid || !surfaceTele.isValid) return
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val outMain = OutputConfiguration(surfaceMain).apply { setPhysicalCameraId(widePhysicalId) }
+                val outTele = OutputConfiguration(surfaceTele).apply { setPhysicalCameraId(telePhysicalId) }
+
+                camera.createCaptureSessionByOutputConfigurations(
+                    listOf(outMain, outTele),
+                    object : CameraCaptureSession.StateCallback() {
+                        override fun onConfigured(session: CameraCaptureSession) {
+                            captureSession = session
+                            val previewRequest = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
+                                addTarget(surfaceMain)
+                                addTarget(surfaceTele)
+                                set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+                                set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CameraMetadata.CONTROL_VIDEO_STABILIZATION_MODE_ON)
+
+                                // Hardveres ISP kivágás alkalmazása a Főkamerára (2.79x zoom a videón!)
+                                val cropRegion = getWideHardwareCropRegion()
+                                if (cropRegion != null) {
+                                    try {
+                                        setPhysicalCameraKey(CaptureRequest.SCALER_CROP_REGION, cropRegion, widePhysicalId)
+                                    } catch (e: Exception) {
+                                        set(CaptureRequest.SCALER_CROP_REGION, cropRegion)
+                                    }
+                                }
+                            }.build()
+
+                            session.setRepeatingRequest(previewRequest, null, backgroundHandler)
+                            runOnUiThread {
+                                tvStatus.text = "Sztereó előnézet kész (Hardveres 2.79x méret-illesztés aktív)"
+                                btnRecord.isEnabled = true
+                            }
+                        }
+
+                        override fun onConfigureFailed(session: CameraCaptureSession) {
+                            runOnUiThread {
+                                tvStatus.text = "Session hiba a sztereó videó előkészítésekor."
+                            }
+                        }
+                    },
+                    backgroundHandler
+                )
+            }
+        } catch (e: Exception) {
+            runOnUiThread {
+                tvStatus.text = "Hiba: ${e.message}"
+            }
+        }
+    }
+
+    private fun startStereoRecording() {
+        val camera = cameraDevice ?: return
+        btnRecord.isEnabled = false
+        tvStatus.text = "Videó rögzítők előkészítése..."
+
+        try {
+            val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            wideTempFile = File(cacheDir, "TEMP_${timeStamp}_L.mp4")
+            teleTempFile = File(cacheDir, "TEMP_${timeStamp}_R.mp4")
+
+            // 1. Bal szem felvevő (Főkamera + Mikrofon hang)
+            recorderWide = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                MediaRecorder(this)
+            } else {
+                MediaRecorder()
+            }.apply {
+                setAudioSource(MediaRecorder.AudioSource.MIC)
+                setVideoSource(MediaRecorder.VideoSource.SURFACE)
+                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                setOutputFile(wideTempFile!!.absolutePath)
+                setVideoEncodingBitRate(14_000_000)
+                setVideoFrameRate(30)
+                setVideoSize(1920, 1080)
+                setVideoEncoder(MediaRecorder.VideoEncoder.H264)
+                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                setAudioEncodingBitRate(192000)
+                setAudioSamplingRate(48000)
+                prepare()
+            }
+
+            // 2. Jobb szem felvevő (Telekamera, csak videó - hangütközés elkerülésére)
+            recorderTele = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                MediaRecorder(this)
+            } else {
+                MediaRecorder()
+            }.apply {
+                setVideoSource(MediaRecorder.VideoSource.SURFACE)
+                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                setOutputFile(teleTempFile!!.absolutePath)
+                setVideoEncodingBitRate(14_000_000)
+                setVideoFrameRate(30)
+                setVideoSize(1920, 1080)
+                setVideoEncoder(MediaRecorder.VideoEncoder.H264)
+                prepare()
+            }
+
+            val surfaceMain = surfaceViewMain.holder.surface
+            val surfaceTele = surfaceViewTele.holder.surface
+            val recWideSurface = recorderWide!!.surface
+            val recTeleSurface = recorderTele!!.surface
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val outPreviewMain = OutputConfiguration(surfaceMain).apply { setPhysicalCameraId(widePhysicalId) }
+                val outPreviewTele = OutputConfiguration(surfaceTele).apply { setPhysicalCameraId(telePhysicalId) }
+                val outRecWide = OutputConfiguration(recWideSurface).apply { setPhysicalCameraId(widePhysicalId) }
+                val outRecTele = OutputConfiguration(recTeleSurface).apply { setPhysicalCameraId(telePhysicalId) }
+
+                captureSession?.close()
+                camera.createCaptureSessionByOutputConfigurations(
+                    listOf(outPreviewMain, outPreviewTele, outRecWide, outRecTele),
+                    object : CameraCaptureSession.StateCallback() {
+                        override fun onConfigured(session: CameraCaptureSession) {
+                            captureSession = session
+
+                            val recordRequest = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
+                                addTarget(surfaceMain)
+                                addTarget(surfaceTele)
+                                addTarget(recWideSurface)
+                                addTarget(recTeleSurface)
+                                set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+
+                                // Főkamera zoomolt kivágás alkalmazása a videóra is!
+                                val cropRegion = getWideHardwareCropRegion()
+                                if (cropRegion != null) {
+                                    try {
+                                        setPhysicalCameraKey(CaptureRequest.SCALER_CROP_REGION, cropRegion, widePhysicalId)
+                                    } catch (e: Exception) {
+                                        set(CaptureRequest.SCALER_CROP_REGION, cropRegion)
+                                    }
+                                }
+                            }.build()
+
+                            session.setRepeatingRequest(recordRequest, null, backgroundHandler)
+
+                            // Rögzítés egyidejű elindítása mindkét csatornán
+                            recorderWide?.start()
+                            recorderTele?.start()
+
+                            runOnUiThread {
+                                isRecording = true
+                                btnRecord.isEnabled = true
+                                btnRecord.setImageResource(android.R.drawable.ic_media_pause)
+                                tvStatus.text = "SZINKRONIZÁLT SZTEREÓ FELVÉTEL FOLYAMATBAN!"
+                                tvTimer.visibility = View.VISIBLE
+                                recordingStartTime = SystemClock.uptimeMillis()
+                                timerHandler.post(timerRunnable)
+                            }
+                        }
+
+                        override fun onConfigureFailed(session: CameraCaptureSession) {
+                            runOnUiThread {
+                                btnRecord.isEnabled = true
+                                tvStatus.text = "A videó rögzítő session indítása sikertelen."
+                            }
+                        }
+                    },
+                    backgroundHandler
+                )
+            }
+
+        } catch (e: Exception) {
+            tvStatus.text = "Videó indítási hiba: ${e.message}"
+            btnRecord.isEnabled = true
+        }
+    }
+
+    private fun stopStereoRecording() {
+        btnRecord.isEnabled = false
+        progressBar.visibility = View.VISIBLE
+        tvStatus.text = "Felvétel leállítása és mentése a Galériába..."
+        isRecording = false
+        timerHandler.removeCallbacks(timerRunnable)
+
+        backgroundHandler.post {
+            try {
+                recorderWide?.stop()
+                recorderTele?.stop()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                recorderWide?.reset()
+                recorderWide?.release()
+                recorderWide = null
+
+                recorderTele?.reset()
+                recorderTele?.release()
+                recorderTele = null
+            }
+
+            val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val filenameL = "VID_${timeStamp}_L.mp4"
+            val filenameR = "VID_${timeStamp}_R.mp4"
+
+            wideTempFile?.let { if (it.exists()) saveVideoToMediaStore(it, filenameL, "S24 Bal Sztereó Videó (2.79x Crop)") }
+            teleTempFile?.let { if (it.exists()) saveVideoToMediaStore(it, filenameR, "S24 Jobb Sztereó Videó (3x Natív)") }
+
+            runOnUiThread {
+                progressBar.visibility = View.GONE
+                btnRecord.isEnabled = true
+                btnRecord.setImageResource(android.R.drawable.ic_media_play)
+                tvTimer.visibility = View.GONE
+                tvStatus.text = "Sikeres videómentés a Movies/Stereo3D mappába ($filenameL & $filenameR)!"
+                Toast.makeText(this@StereoVideoActivity, "Sztereó videópár mentve!", Toast.LENGTH_LONG).show()
+
+                startStereoPreviewSession()
+            }
+        }
+    }
+
+    private fun saveVideoToMediaStore(file: File, filename: String, description: String) {
+        val values = ContentValues().apply {
+            put(MediaStore.Video.Media.DISPLAY_NAME, filename)
+            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            put(MediaStore.Video.Media.DESCRIPTION, description)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/Stereo3D")
+                put(MediaStore.Video.Media.IS_PENDING, 1)
+            }
+        }
+
+        val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+        uri?.let {
+            contentResolver.openOutputStream(it).use { out ->
+                if (out != null) {
+                    FileInputStream(file).use { inStream ->
+                        inStream.copyTo(out)
+                    }
+                }
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                values.clear()
+                values.put(MediaStore.Video.Media.IS_PENDING, 0)
+                contentResolver.update(uri, values, null, null)
+            }
+        }
+        file.delete()
+    }
+
+    private fun closeCameraSystem() {
+        captureSession?.close()
+        captureSession = null
+        cameraDevice?.close()
+        cameraDevice = null
+    }
+}

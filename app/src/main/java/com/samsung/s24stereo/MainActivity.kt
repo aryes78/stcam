@@ -13,7 +13,11 @@ import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
 
-    private val CAMERA_PERMISSION_CODE = 101
+    private val PERMISSIONS_REQUEST_CODE = 101
+    private val REQUIRED_PERMISSIONS = arrayOf(
+        Manifest.permission.CAMERA,
+        Manifest.permission.RECORD_AUDIO
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -21,6 +25,7 @@ class MainActivity : AppCompatActivity() {
 
         val btnRunDiagnostic = findViewById<Button>(R.id.btnRunDiagnostic)
         val btnOpenStereoCam = findViewById<Button>(R.id.btnOpenStereoCam)
+        val btnOpenStereoVideo = findViewById<Button>(R.id.btnOpenStereoVideo)
         val tvDeviceInfo = findViewById<TextView>(R.id.tvDeviceInfo)
 
         tvDeviceInfo.text = "Eszköz: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} (Android ${android.os.Build.VERSION.RELEASE})"
@@ -32,14 +37,22 @@ class MainActivity : AppCompatActivity() {
         btnOpenStereoCam.setOnClickListener {
             checkPermissionsAndLaunch(StereoCaptureActivity::class.java)
         }
+
+        btnOpenStereoVideo.setOnClickListener {
+            checkPermissionsAndLaunch(StereoVideoActivity::class.java)
+        }
     }
 
     private fun checkPermissionsAndLaunch(targetActivity: Class<*>) {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+        val missingPermissions = REQUIRED_PERMISSIONS.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (missingPermissions.isNotEmpty()) {
             ActivityCompat.requestPermissions(
                 this,
-                arrayOf(Manifest.permission.CAMERA),
-                CAMERA_PERMISSION_CODE
+                missingPermissions.toTypedArray(),
+                PERMISSIONS_REQUEST_CODE
             )
         } else {
             startActivity(Intent(this, targetActivity))
@@ -48,10 +61,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == CAMERA_PERMISSION_CODE && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            Toast.makeText(this, "Kamera jogosultság megadva!", Toast.LENGTH_SHORT).show()
+        if (requestCode == PERMISSIONS_REQUEST_CODE && grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+            Toast.makeText(this, "Minden jogosultság megadva!", Toast.LENGTH_SHORT).show()
         } else {
-            Toast.makeText(this, "A sztereó kamerához szükséges a kamera jogosultság!", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "A sztereó fotóhoz és videóhoz kamera és mikrofon jogosultság szükséges!", Toast.LENGTH_LONG).show()
         }
     }
 }
