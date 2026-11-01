@@ -7,7 +7,6 @@ import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
 import android.hardware.camera2.*
 import android.hardware.camera2.params.OutputConfiguration
-import android.hardware.camera2.params.SessionConfiguration
 import android.media.ImageReader
 import android.os.Build
 import android.os.Bundle
@@ -15,6 +14,7 @@ import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
 import android.provider.MediaStore
+import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
@@ -30,12 +30,7 @@ import java.util.Locale
 /**
  * Samsung Galaxy S24 Vízszintes Sztereó Kamera Felvételkészítő
  * 
- * - Logikai Multi-Kamera ("0") egyetlen kapcsolatán keresztül kéri le a fizikai al-streameket:
- *   Wide: 5.4mm (Physical ID 5) -> Bal szem nézet
- *   Tele: 7.0mm (Physical ID 6) -> Jobb szem nézet
- * - Hardveres egyidejű exponálás (zero shutter lag difference).
- * - A Főkamera képét automatikusan 2.79x arányban kivágja a témaméret egyeztetéséhez.
- * - Menti a két fájlt: IMG_L.jpg és IMG_R.jpg a DCIM/Stereo3D könyvtárba.
+ * Dinamikus fizikai kamera detektálással a 'Physical camera id is not valid' hiba elkerülésére.
  */
 class StereoCaptureActivity : AppCompatActivity() {
 
@@ -55,9 +50,10 @@ class StereoCaptureActivity : AppCompatActivity() {
     private lateinit var backgroundThread: HandlerThread
     private lateinit var backgroundHandler: Handler
 
-    // Samsung S24 hardveresen igazolt fizikai lencsék (SM-S921B)
-    private var widePhysicalId = "5" // 5.4mm Wide (Bal szem)
-    private var telePhysicalId = "6" // 7.0mm Tele 3x (Jobb szem)
+    // Dinamikusan detektált érvényes fizikai lencsék az S24-en
+    private val validPhysicalIds = mutableSetOf<String>()
+    private var widePhysicalId: String? = null
+    private var telePhysicalId: String? = null
     private val FOCAL_CROP_RATIO = 2.79f
 
     private var isSurfaceMainReady = false
@@ -87,7 +83,6 @@ class StereoCaptureActivity : AppCompatActivity() {
     }
 
     private fun initSurfaceHolders() {
-        // Fix buffer méret beállítása, megelőzve a GPU "Surface abandoned" hibát
         surfaceViewMain.holder.setFixedSize(1280, 720)
         surfaceViewMain.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
@@ -125,28 +120,57 @@ class StereoCaptureActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Önadaptív kamera-felderítés a Samsung S24-en
+     */
     private fun detectPhysicalCameraIds() {
+        validPhysicalIds.clear()
+        widePhysicalId = null
+        telePhysicalId = null
+
         try {
             val chars0 = cameraManager.getCameraCharacteristics("0")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                for (pId in chars0.physicalCameraIds) {
-                    try {
-                        val pChars = cameraManager.getCameraCharacteristics(pId)
-                        val focalArray: FloatArray? = pChars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
-                        val focal: Float = if (focalArray != null && focalArray.isNotEmpty()) focalArray[0] else 0f
-                        if (focal in 4.5f..6.0f) {
-                            widePhysicalId = pId // Főkamera (5.4mm)
-                        } else if (focal > 6.0f) {
-                            telePhysicalId = pId // 3x Telefotó (7.0mm)
+                val pIds = chars0.physicalCameraIds
+                if (pIds != null && pIds.isNotEmpty()) {
+                    validPhysicalIds.addAll(pIds)
+
+                    data class PhysCam(val id: String, val focalLength: Float)
+                    val camList = mutableListOf<PhysCam>()
+
+                    for (id in pIds) {
+                        try {
+                            val pChars = cameraManager.getCameraCharacteristics(id)
+                            val focalArray = pChars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+                            val focal = if (focalArray != null && focalArray.isNotEmpty()) focalArray[0] else 0f
+                            camList.add(PhysCam(id, focal))
+                        } catch (e: Exception) {
+                            camList.add(PhysCam(id, 0f))
                         }
-                    } catch (e: Exception) {
-                        // ignore
+                    }
+
+                    camList.sortBy { it.focalLength }
+
+                    if (camList.size >= 3) {
+                        widePhysicalId = camList[1].id
+                        telePhysicalId = camList.last().id
+                    } else if (camList.size == 2) {
+                        widePhysicalId = camList[0].id
+                        telePhysicalId = camList[1].id
+                    } else if (camList.size == 1) {
+                        widePhysicalId = camList[0].id
+                        telePhysicalId = camList[0].id
                     }
                 }
             }
         } catch (e: Exception) {
-            widePhysicalId = "5"
-            telePhysicalId = "6"
+            e.printStackTrace()
+        }
+
+        if (widePhysicalId == null && validPhysicalIds.isNotEmpty()) {
+            val list = validPhysicalIds.toList()
+            widePhysicalId = list[0]
+            telePhysicalId = if (list.size > 1) list[1] else list[0]
         }
     }
 
@@ -163,7 +187,7 @@ class StereoCaptureActivity : AppCompatActivity() {
     }
 
     private fun startBackgroundThread() {
-        backgroundThread = HandlerThread("CameraBackground").also { it.start() }
+        backgroundThread = HandlerThread("StereoCaptureThread").also { it.start() }
         backgroundHandler = Handler(backgroundThread.looper)
     }
 
@@ -177,9 +201,10 @@ class StereoCaptureActivity : AppCompatActivity() {
     }
 
     private fun openStereoCameraSystem() {
-        tvStatus.text = "S24 Sztereó inicializálása (Wide: [$widePhysicalId] + Tele: [$telePhysicalId])..."
+        val wLabel = widePhysicalId ?: "Auto"
+        val tLabel = telePhysicalId ?: "Auto"
+        tvStatus.text = "S24 Sztereó inicializálása (Fő: [$wLabel] + Tele: [$tLabel])..."
         try {
-            // Főkamera képfogadó: 4080 x 3060
             imageReaderMain = ImageReader.newInstance(4080, 3060, ImageFormat.JPEG, 2).apply {
                 setOnImageAvailableListener({ reader ->
                     val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
@@ -192,7 +217,6 @@ class StereoCaptureActivity : AppCompatActivity() {
                 }, backgroundHandler)
             }
 
-            // Telekamera képfogadó: 4000 x 3000
             imageReaderTele = ImageReader.newInstance(4000, 3000, ImageFormat.JPEG, 2).apply {
                 setOnImageAvailableListener({ reader ->
                     val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
@@ -228,6 +252,14 @@ class StereoCaptureActivity : AppCompatActivity() {
         }
     }
 
+    private fun createSafeOutputConfiguration(surface: Surface, physicalId: String?): OutputConfiguration {
+        val outConfig = OutputConfiguration(surface)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && physicalId != null && validPhysicalIds.contains(physicalId)) {
+            outConfig.setPhysicalCameraId(physicalId)
+        }
+        return outConfig
+    }
+
     private fun startDualPhysicalCaptureSession() {
         val camera = cameraDevice ?: return
         try {
@@ -242,10 +274,10 @@ class StereoCaptureActivity : AppCompatActivity() {
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val outPreviewMain = OutputConfiguration(surfaceMain).apply { setPhysicalCameraId(widePhysicalId) }
-                val outPreviewTele = OutputConfiguration(surfaceTele).apply { setPhysicalCameraId(telePhysicalId) }
-                val outStillMain = OutputConfiguration(stillMainSurface).apply { setPhysicalCameraId(widePhysicalId) }
-                val outStillTele = OutputConfiguration(stillTeleSurface).apply { setPhysicalCameraId(telePhysicalId) }
+                val outPreviewMain = createSafeOutputConfiguration(surfaceMain, widePhysicalId)
+                val outPreviewTele = createSafeOutputConfiguration(surfaceTele, telePhysicalId)
+                val outStillMain = createSafeOutputConfiguration(stillMainSurface, widePhysicalId)
+                val outStillTele = createSafeOutputConfiguration(stillTeleSurface, telePhysicalId)
 
                 camera.createCaptureSessionByOutputConfigurations(
                     listOf(outPreviewMain, outPreviewTele, outStillMain, outStillTele),
@@ -260,7 +292,9 @@ class StereoCaptureActivity : AppCompatActivity() {
 
                             session.setRepeatingRequest(previewRequest, null, backgroundHandler)
                             runOnUiThread {
-                                tvStatus.text = "S24 Sztereó Előnézet Aktív (1x Fő + 3x Tele)"
+                                val wLabel = widePhysicalId ?: "Auto"
+                                val tLabel = telePhysicalId ?: "Auto"
+                                tvStatus.text = "S24 Sztereó Előnézet Aktív (Fő: [$wLabel] + Tele: [$tLabel])"
                                 btnShutter.isEnabled = true
                             }
                         }
@@ -320,22 +354,17 @@ class StereoCaptureActivity : AppCompatActivity() {
                         tvStatus.text = "Képillesztés, 2.79x kivágás és 3D Side-by-Side összefűzés..."
                     }
 
-                    // 1. Telefotó feldolgozása (Jobb szem, 67mm natív 3x)
                     val teleBitmap = BitmapFactory.decodeByteArray(teleData, 0, teleData.size)
                         ?: throw IllegalStateException("Telefotó kép dekódolása sikertelen")
 
-                    // 2. Főkamera feldolgozása (2.79x központi kivágás a témaméret egyezéshez)
                     val rawMainBitmap = BitmapFactory.decodeByteArray(mainData, 0, mainData.size)
                         ?: throw IllegalStateException("Főkamera kép dekódolása sikertelen")
 
                     val croppedMainBitmap = cropToMatchTelephoto(rawMainBitmap, FOCAL_CROP_RATIO, teleBitmap.width, teleBitmap.height)
-                    // Azonnali memóriafelszabadítás a nyers képből a nagy SBS kép előtt
                     rawMainBitmap.recycle()
 
-                    // 3. Automatikus összefűzés egyetlen Side-by-Side (SBS) sztereó képre!
                     val sbsBitmap = createSideBySideBitmap(croppedMainBitmap, teleBitmap)
 
-                    // 4. Mentés DCIM/Stereo3D könyvtárba
                     val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
                     val filenameSBS = "IMG_${timeStamp}_SBS.jpg"
                     val filenameL = "IMG_${timeStamp}_L.jpg"
@@ -345,7 +374,6 @@ class StereoCaptureActivity : AppCompatActivity() {
                     saveBitmapToGallery(croppedMainBitmap, filenameL, "S24 Bal Sztereó Kép (Főkamera 2.79x kivágva)")
                     saveBitmapToGallery(teleBitmap, filenameR, "S24 Jobb Sztereó Kép (3x Telefotó natív)")
 
-                    // Bitmap memóriák azonnali felszabadítása
                     sbsBitmap.recycle()
                     croppedMainBitmap.recycle()
                     teleBitmap.recycle()
@@ -353,8 +381,8 @@ class StereoCaptureActivity : AppCompatActivity() {
                     runOnUiThread {
                         progressBar.visibility = View.GONE
                         btnShutter.isEnabled = true
-                        tvStatus.text = "Sikeres mentés: $filenameSBS és külön L/R fájlok a Galériában!"
-                        Toast.makeText(this@StereoCaptureActivity, "Összefűzött SBS 3D kép és L/R képek mentve a Galériába!", Toast.LENGTH_LONG).show()
+                        tvStatus.text = "Sikeres mentés: $filenameSBS a Galériába!"
+                        Toast.makeText(this@StereoCaptureActivity, "Összefűzött SBS 3D kép mentve!", Toast.LENGTH_LONG).show()
                     }
                 } catch (e: Throwable) {
                     e.printStackTrace()
@@ -372,9 +400,6 @@ class StereoCaptureActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Összefűzi a bal és jobb oldali sztereó képeket egyetlen közös képre (Side-by-Side)
-     */
     private fun createSideBySideBitmap(leftBitmap: Bitmap, rightBitmap: Bitmap): Bitmap {
         val width = leftBitmap.width + rightBitmap.width
         val height = Math.max(leftBitmap.height, rightBitmap.height)
@@ -432,4 +457,3 @@ class StereoCaptureActivity : AppCompatActivity() {
         imageReaderTele = null
     }
 }
-

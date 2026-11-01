@@ -14,6 +14,7 @@ import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.MediaStore
+import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
@@ -32,21 +33,10 @@ import java.util.Locale
 /**
  * Samsung Galaxy S24 Szimultán Sztereó Videófelvevő (Full HD + Hardveres ISP Zoom)
  * 
- * - Hardveres felvétel mindkét fizikai lencséről egyszerre:
- *   Wide (ID: 5, 24mm ekv) -> Bal szem stream
- *   Tele (ID: 6, 67mm ekv) -> Jobb szem stream
- * 
- * - HARDVERES KÉPMÉRET-EGYEZTETÉS (ISP Scaler Crop):
- *   A Főkamera (Wide) video streamjére hardveresen beállítjuk a
- *   CaptureRequest.SCALER_CROP_REGION-t (alapértelmezett 2.79x központi kivágás).
- *   Ezt maga a Samsung Exynos 2400 / Snapdragon 8 Gen 3 ISP processzor végzi el
- *   közvetlenül az 50 MP / 12 MP aktív szenzorméretből, 0% CPU terheléssel!
- *   Ezáltal mind a keresőben, mind a felvett MP4 videón a két felvétel témamérete
- *   pixelre pontosan egyezik, anélkül, hogy utólag lecsökkenne a felbontás!
- * 
- * - Full HD 1080p (1920x1080 @ 30fps) natív hardveres rögzítés:
- *   A MediaRecorder közvetlenül a háttértárba (flash UFS 4.0) streamel kódolt H.264 adatokat,
- *   így a RAM fogyasztás minimális (~20-40 MB), az S24 8GB/12GB memóriája bőségesen elegendő.
+ * DINAMIKUS FIZIKAI KAMERA FELDERÍTÉS:
+ * Nem használ hardcode-olt azonosítókat ("5" / "6"), hanem futásidőben
+ * a CameraCharacteristics.getPhysicalCameraIds() halmazból olvassa ki a telefon
+ * tényleges fizikai lencséit, és kizárólag érvényes azonosítót ad át az OutputConfiguration-nek!
  */
 class StereoVideoActivity : AppCompatActivity() {
 
@@ -75,8 +65,12 @@ class StereoVideoActivity : AppCompatActivity() {
     private lateinit var backgroundThread: HandlerThread
     private lateinit var backgroundHandler: Handler
 
-    private var widePhysicalId = "5" // 5.4mm Wide
-    private var telePhysicalId = "6" // 7.0mm Tele 3x
+    // Dinamikusan detektált érvényes fizikai kamerák
+    private val validPhysicalIds = mutableSetOf<String>()
+    private var widePhysicalId: String? = null
+    private var telePhysicalId: String? = null
+    private var detectedCameraSummary = ""
+
     private var currentCropRatio = 2.79f
     private var isFullHd = true // Alapértelmezett: 1080p Full HD
 
@@ -155,7 +149,6 @@ class StereoVideoActivity : AppCompatActivity() {
             }
             isFullHd = !isFullHd
             updateResolutionButtonUI()
-            // Újraindítjuk a preview session-t a módosított felbontáshoz
             startStereoPreviewSession()
         }
 
@@ -165,19 +158,15 @@ class StereoVideoActivity : AppCompatActivity() {
 
     private fun updateZoomDisplayUI() {
         tvZoomValue.text = String.format(Locale.US, "%.2fx", currentCropRatio)
-        tvBadgeWide.text = String.format(Locale.US, "BAL: FŐ [%.2fx CROP]", currentCropRatio)
+        val wideLabel = widePhysicalId ?: "Auto"
+        tvBadgeWide.text = String.format(Locale.US, "BAL: FŐ [%s] (%.2fx CROP)", wideLabel, currentCropRatio)
     }
 
     private fun updateResolutionButtonUI() {
-        if (isFullHd) {
-            btnToggleResolution.text = "FHD 1080p"
-            btnToggleResolution.setBackgroundColor(0xFF059669.toInt()) // zöld
-            tvStatus.text = "S24 Full HD Sztereó Videó (1920x1080)"
-        } else {
-            btnToggleResolution.text = "HD 720p"
-            btnToggleResolution.setBackgroundColor(0xFF475569.toInt()) // szürke
-            tvStatus.text = "S24 HD Sztereó Videó (1280x720)"
-        }
+        val resLabel = if (isFullHd) "FHD 1080p" else "HD 720p"
+        btnToggleResolution.text = resLabel
+        btnToggleResolution.setBackgroundColor(if (isFullHd) 0xFF059669.toInt() else 0xFF475569.toInt())
+        tvStatus.text = "S24 Sztereó Videó ($resLabel) | $detectedCameraSummary"
     }
 
     private fun updateZoomDisplayAndApply() {
@@ -186,11 +175,82 @@ class StereoVideoActivity : AppCompatActivity() {
     }
 
     /**
+     * Önadaptív kamera-felderítés a Samsung S24-en:
+     * Kiolvassa a logikai "0" kamera alatti TÉNYLEGES fizikai ID-kat.
+     * Soha nem feltételez hardcoded azonosítókat!
+     */
+    private fun detectPhysicalCameraIds() {
+        validPhysicalIds.clear()
+        widePhysicalId = null
+        telePhysicalId = null
+
+        try {
+            val chars0 = cameraManager.getCameraCharacteristics("0")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val pIds = chars0.physicalCameraIds
+                if (pIds != null && pIds.isNotEmpty()) {
+                    validPhysicalIds.addAll(pIds)
+
+                    // Gyűjtsük össze az összes fizikai kamerát fókusztávolság szerint
+                    data class PhysCam(val id: String, val focalLength: Float)
+                    val camList = mutableListOf<PhysCam>()
+
+                    for (id in pIds) {
+                        try {
+                            val pChars = cameraManager.getCameraCharacteristics(id)
+                            val focalArray = pChars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+                            val focal = if (focalArray != null && focalArray.isNotEmpty()) focalArray[0] else 0f
+                            camList.add(PhysCam(id, focal))
+                        } catch (e: Exception) {
+                            camList.add(PhysCam(id, 0f))
+                        }
+                    }
+
+                    // Rendezzük növekvő fókusztávolság szerint
+                    camList.sortBy { it.focalLength }
+
+                    if (camList.size >= 3) {
+                        // Samsung hármas kamera: [0]: Ultrawide (~2.2mm), [1]: Wide Fő (~5.4/6.7mm), [2]: Tele (~7.0mm)
+                        widePhysicalId = camList[1].id
+                        telePhysicalId = camList.last().id
+                        detectedCameraSummary = "Kamerák: Fő [ID: $widePhysicalId, ${camList[1].focalLength}mm], Tele [ID: $telePhysicalId, ${camList.last().focalLength}mm]"
+                    } else if (camList.size == 2) {
+                        widePhysicalId = camList[0].id
+                        telePhysicalId = camList[1].id
+                        detectedCameraSummary = "Kamerák: Fő [ID: $widePhysicalId], Tele [ID: $telePhysicalId]"
+                    } else if (camList.size == 1) {
+                        widePhysicalId = camList[0].id
+                        telePhysicalId = camList[0].id
+                        detectedCameraSummary = "Kamera: ID [${camList[0].id}]"
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            detectedCameraSummary = "Detektálási hiba: ${e.message}"
+        }
+
+        // Végső biztonsági garancia: ha a listában maradt fizikai ID, de nem választódott ki
+        if (widePhysicalId == null && validPhysicalIds.isNotEmpty()) {
+            val list = validPhysicalIds.toList()
+            widePhysicalId = list[0]
+            telePhysicalId = if (list.size > 1) list[1] else list[0]
+            detectedCameraSummary = "Kamerák: Bal [${widePhysicalId}], Jobb [${telePhysicalId}]"
+        }
+
+        val wideLabel = widePhysicalId ?: "Auto"
+        val teleLabel = telePhysicalId ?: "Auto"
+        tvBadgeWide.text = String.format(Locale.US, "BAL: FŐ [%s] (%.2fx CROP)", wideLabel, currentCropRatio)
+        tvBadgeTele.text = "JOBB: TELE [$teleLabel] (3x NATÍV)"
+    }
+
+    /**
      * Kiszámítja a főkamera aktív szenzorméretéből a középre igazított SCALER_CROP_REGION téglalapot.
      */
     private fun calculateCropRectForWide(ratio: Float): Rect? {
+        val targetId = widePhysicalId ?: "0"
         return try {
-            val pChars = cameraManager.getCameraCharacteristics(widePhysicalId)
+            val pChars = cameraManager.getCameraCharacteristics(targetId)
             val activeArray = pChars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return null
 
             val cropW = (activeArray.width() / ratio).toInt()
@@ -225,7 +285,11 @@ class StereoVideoActivity : AppCompatActivity() {
 
             val cropRect = calculateCropRectForWide(currentCropRatio)
             if (cropRect != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                builder.setPhysicalCameraKey(CaptureRequest.SCALER_CROP_REGION, cropRect, widePhysicalId)
+                if (widePhysicalId != null && validPhysicalIds.contains(widePhysicalId)) {
+                    builder.setPhysicalCameraKey(CaptureRequest.SCALER_CROP_REGION, cropRect, widePhysicalId!!)
+                } else {
+                    builder.set(CaptureRequest.SCALER_CROP_REGION, cropRect)
+                }
             }
 
             session.setRepeatingRequest(builder.build(), null, backgroundHandler)
@@ -271,33 +335,6 @@ class StereoVideoActivity : AppCompatActivity() {
                 openStereoCameraSystem()
             }
         }
-    }
-
-    private fun detectPhysicalCameraIds() {
-        try {
-            val chars0 = cameraManager.getCameraCharacteristics("0")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                for (pId in chars0.physicalCameraIds) {
-                    try {
-                        val pChars = cameraManager.getCameraCharacteristics(pId)
-                        val focalArray: FloatArray? = pChars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
-                        val focal = if (focalArray != null && focalArray.isNotEmpty()) focalArray[0] else 0f
-                        if (focal in 4.5f..6.0f) {
-                            widePhysicalId = pId // Főkamera (5.4mm)
-                        } else if (focal > 6.0f) {
-                            telePhysicalId = pId // Telefotó 3x (7.0mm)
-                        }
-                    } catch (e: Exception) {
-                        // ignore
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            widePhysicalId = "5"
-            telePhysicalId = "6"
-        }
-        tvBadgeWide.text = String.format(Locale.US, "BAL: FŐ [%.2fx CROP]", currentCropRatio)
-        tvBadgeTele.text = "JOBB: TELE [$telePhysicalId] (3x NATÍV)"
     }
 
     override fun onResume() {
@@ -349,7 +386,7 @@ class StereoVideoActivity : AppCompatActivity() {
                     camera.close()
                     cameraDevice = null
                     runOnUiThread {
-                        tvStatus.text = "Kamera hiba: $error"
+                        tvStatus.text = "Kamera nyitási hiba: $error"
                     }
                 }
             }, backgroundHandler)
@@ -360,6 +397,19 @@ class StereoVideoActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Biztonságos OutputConfiguration létrehozása:
+     * KIZÁRÓLAG akkor hívja meg a setPhysicalCameraId-t, ha az ID
+     * BIZONYÍTOTTAN szerepel a telefon validPhysicalIds halmazában!
+     */
+    private fun createSafeOutputConfiguration(surface: Surface, physicalId: String?): OutputConfiguration {
+        val outConfig = OutputConfiguration(surface)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && physicalId != null && validPhysicalIds.contains(physicalId)) {
+            outConfig.setPhysicalCameraId(physicalId)
+        }
+        return outConfig
+    }
+
     private fun startStereoPreviewSession() {
         val camera = cameraDevice ?: return
         try {
@@ -368,8 +418,8 @@ class StereoVideoActivity : AppCompatActivity() {
             if (!surfaceMain.isValid || !surfaceTele.isValid) return
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val outMain = OutputConfiguration(surfaceMain).apply { setPhysicalCameraId(widePhysicalId) }
-                val outTele = OutputConfiguration(surfaceTele).apply { setPhysicalCameraId(telePhysicalId) }
+                val outMain = createSafeOutputConfiguration(surfaceMain, widePhysicalId)
+                val outTele = createSafeOutputConfiguration(surfaceTele, telePhysicalId)
 
                 captureSession?.close()
                 camera.createCaptureSessionByOutputConfigurations(
@@ -387,7 +437,11 @@ class StereoVideoActivity : AppCompatActivity() {
                                 // 2.79x ISP CROP beállítása a főkamera streamjére
                                 val cropRect = calculateCropRectForWide(currentCropRatio)
                                 if (cropRect != null) {
-                                    previewRequestBuilder.setPhysicalCameraKey(CaptureRequest.SCALER_CROP_REGION, cropRect, widePhysicalId)
+                                    if (widePhysicalId != null && validPhysicalIds.contains(widePhysicalId)) {
+                                        previewRequestBuilder.setPhysicalCameraKey(CaptureRequest.SCALER_CROP_REGION, cropRect, widePhysicalId!!)
+                                    } else {
+                                        previewRequestBuilder.set(CaptureRequest.SCALER_CROP_REGION, cropRect)
+                                    }
                                 }
 
                                 val previewRequest = previewRequestBuilder.build()
@@ -395,7 +449,7 @@ class StereoVideoActivity : AppCompatActivity() {
 
                                 runOnUiThread {
                                     val resLabel = if (isFullHd) "Full HD 1080p" else "HD 720p"
-                                    tvStatus.text = "S24 Sztereó Előnézet Kész ($resLabel | Fő: ${String.format(Locale.US, "%.2f", currentCropRatio)}x + Tele: 3x)"
+                                    tvStatus.text = "S24 Sztereó Előnézet Kész ($resLabel | $detectedCameraSummary)"
                                     btnRecord.isEnabled = true
                                 }
                             } catch (e: Exception) {
@@ -480,10 +534,10 @@ class StereoVideoActivity : AppCompatActivity() {
             val recTeleSurface = recorderTele!!.surface
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val outPreviewMain = OutputConfiguration(surfaceMain).apply { setPhysicalCameraId(widePhysicalId) }
-                val outPreviewTele = OutputConfiguration(surfaceTele).apply { setPhysicalCameraId(telePhysicalId) }
-                val outRecWide = OutputConfiguration(recWideSurface).apply { setPhysicalCameraId(widePhysicalId) }
-                val outRecTele = OutputConfiguration(recTeleSurface).apply { setPhysicalCameraId(telePhysicalId) }
+                val outPreviewMain = createSafeOutputConfiguration(surfaceMain, widePhysicalId)
+                val outPreviewTele = createSafeOutputConfiguration(surfaceTele, telePhysicalId)
+                val outRecWide = createSafeOutputConfiguration(recWideSurface, widePhysicalId)
+                val outRecTele = createSafeOutputConfiguration(recTeleSurface, telePhysicalId)
 
                 captureSession?.close()
                 camera.createCaptureSessionByOutputConfigurations(
@@ -503,7 +557,11 @@ class StereoVideoActivity : AppCompatActivity() {
                                 // 2.79x CROP beállítása a főkamera streamjére Full HD kimenettel!
                                 val cropRect = calculateCropRectForWide(currentCropRatio)
                                 if (cropRect != null) {
-                                    recordRequestBuilder.setPhysicalCameraKey(CaptureRequest.SCALER_CROP_REGION, cropRect, widePhysicalId)
+                                    if (widePhysicalId != null && validPhysicalIds.contains(widePhysicalId)) {
+                                        recordRequestBuilder.setPhysicalCameraKey(CaptureRequest.SCALER_CROP_REGION, cropRect, widePhysicalId!!)
+                                    } else {
+                                        recordRequestBuilder.set(CaptureRequest.SCALER_CROP_REGION, cropRect)
+                                    }
                                 }
 
                                 val recordRequest = recordRequestBuilder.build()
