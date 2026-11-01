@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.samsung.s24stereo">
+
+    <!-- Hardveres kamera hozzáférések -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Hardver követelmények: Camera2 API és többkamera támogatás -->
+    <uses-feature android:name="android.hardware.camera" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.concurrent" android:required="false" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="S24 Sztereó 3D"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.S24StereoCamera">
+
+        <!-- Főmenü / Indító képernyő -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 1. Lépés: S24 Multi-Kamera Hardveres Diagnosztika & Tesztelő -->
+        <activity
+            android:name=".CameraTesterActivity"
+            android:exported="false"
+            android:label="S24 Kamera Hardverteszt"
+            android:screenOrientation="portrait" />
+
+        <!-- 2. Lépés: Valós idejű Vízszintes Sztereó Fényképező -->
+        <activity
+            android:name=".StereoCaptureActivity"
+            android:exported="false"
+            android:label="Sztereó Felvétel"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize" />
+
+    </application>
+</manifest>
