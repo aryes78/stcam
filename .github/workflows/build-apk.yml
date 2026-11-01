@@ -115,41 +115,28 @@ jobs:
           name: S24StereoCamera-APK
           path: dist-apk/S24StereoCamera.apk
 
-      # 7. DINAMIKUS RELEASE LEÍRÁS ÉS JOGOK
-      - name: Generate release notes
-        id: notes
-        run: |
-          if [ -f "RELEASE_NOTES.md" ]; then
-            echo "Egyéni leírás beolvasása RELEASE_NOTES.md fájlból..."
-            cat RELEASE_NOTES.md > release_body.txt
-          else
-            cat << 'EOF' > release_body.txt
-### Samsung Galaxy S24 Sztereó Rendszer (v1.1.0)
-- **Telepítő fájl:** [S24StereoCamera.apk](dist-apk/S24StereoCamera.apk)
-- **Felbontás:** Full HD 1080p @ 30fps
-- **Főkamera:** 2.79x hardveres központi kivágás (4-pixel Bayer RGGB igazítással, lila elszíneződés nélkül)
-- **OIS (Optikai Képstabilizátor):** Videónál automatikusan kikapcsolva a merev, elmozdulásmentes sztereó tengelyért; Fotónál aktív a kézremegés ellen
-- **Exponáló gombok:** 52dp margóval balra hozva a navigációs sáv elől
-EOF
-          fi
-          echo "" >> release_body.txt
-          echo "---" >> release_body.txt
-          echo "- **Build azonosító:** #${{ github.run_number }}" >> release_body.txt
-          echo "- **Időpont:** $(date -u '+%Y-%m-%d %H:%M UTC')" >> release_body.txt
-          echo "- **Forráskód commit:** ${{ github.sha }}" >> release_body.txt
-
-      # 8. GITHUB RELEASE LÉTREHOZÁSA (MINDEN FUTÁSKOR ÚJ RELEASE SORSZÁMMAL!)
+      # 7. GITHUB RELEASE LÉTREHOZÁSA (MINDEN FUTÁSKOR ÚJ RELEASE SORSZÁMMAL!)
       - name: Create GitHub Release with S24StereoCamera.apk
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         continue-on-error: true
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v1.1.0-b{0}', github.run_number) }}
-          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('Samsung S24 Sztereó v1.1.0 (Build #{0})', github.run_number) }}
-          body_path: release_body.txt
+          tag_name: v1.1.0-build-${{ github.run_number }}
+          name: Samsung S24 Sztereó v1.1.0 (Build #${{ github.run_number }})
+          body: |
+            ### Samsung Galaxy S24 Sztereó Rendszer (v1.1.0)
+            - **Telepítő fájl:** **S24StereoCamera.apk**
+            - **Felbontás:** Full HD 1080p @ 30fps
+            - **Főkamera:** 2.79x hardveres központi kivágás (4-pixel Bayer RGGB igazítással, lila elszíneződés nélkül)
+            - **OIS (Optikai Képstabilizátor):** Videónál automatikusan kikapcsolva (merev sztereó bázis); Fotónál aktív a kézremegés ellen
+            - **Exponáló gombok:** 52dp margóval balra hozva a navigációs sáv elől
+            ---
+            - **Build azonosító:** #${{ github.run_number }}
+            - **Forráskód commit:** ${{ github.sha }}
           draft: false
           prerelease: false
           files: |
             dist-apk/S24StereoCamera.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
