@@ -1,23 +1,28 @@
-name: Zip Kicsomagolása
+name: Zip Kicsomagolasa
 on:
   push:
     paths:
-      - 'fajlok.zip' # Akkor fut le, ha ez a fájl frissül
+      - 'fajlok.zip'
 
 jobs:
   unzip:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write   # Jog a fájlok módosításához
+      workflows: write  # KIFEJEZETT JOG a .github/workflows/ mappához!
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Kibontás és push
+      - name: Unzip files
         run: |
-          unzip fajlok.zip -d .
+          unzip -o fajlok.zip -d .
           rm fajlok.zip
-          git config --local user.email "github-actions@users.noreply.github.com"
+
+      - name: Commit and Push
+        run: |
+          git config --local user.email "github-actions@://github.com"
           git config --local user.name "github-actions"
           git add .
-          git commit -m "Automatikus kicsomagolás"
-          git push origin main
+          git commit -m "Automatikus kicsomagolas (workflow-val)" || echo "Nincs valtozas"
+          git push origin HEAD:${{ github.ref_name }}
