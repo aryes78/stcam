@@ -112,7 +112,7 @@
             android:textSize="12sp" />
     </LinearLayout>
 
-    <!-- Bal felső sarok: Diszkrét OIS & Felbontás gombok -->
+    <!-- Bal felső sarok: Felbontás váltó gomb (1080p / 720p) -->
     <LinearLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
@@ -123,37 +123,24 @@
         android:gravity="center_vertical">
 
         <Button
-            android:id="@+id/btnToggleOis"
-            android:layout_width="wrap_content"
-            android:layout_height="36dp"
-            android:text="OIS: KI (FIX TENGELY)"
-            android:textSize="10sp"
-            android:textStyle="bold"
-            android:textColor="#FFFFFF"
-            android:backgroundTint="#B91C1C"
-            android:paddingLeft="10dp"
-            android:paddingRight="10dp" />
-
-        <Button
             android:id="@+id/btnToggleResolution"
             android:layout_width="wrap_content"
             android:layout_height="36dp"
-            android:layout_marginStart="8dp"
             android:text="1080p FHD"
-            android:textSize="10sp"
+            android:textSize="11sp"
             android:textStyle="bold"
             android:textColor="#FFFFFF"
             android:backgroundTint="#059669"
-            android:paddingLeft="10dp"
-            android:paddingRight="10dp" />
+            android:paddingLeft="12dp"
+            android:paddingRight="12dp" />
     </LinearLayout>
 
-    <!-- Jobb oldali Felvétel vezérlő panel -->
+    <!-- Jobb oldali Felvétel vezérlő panel (52dp biztonságos margó a navigációs sávtól) -->
     <RelativeLayout
-        android:layout_width="100dp"
+        android:layout_width="wrap_content"
         android:layout_height="match_parent"
         android:layout_alignParentEnd="true"
-        android:background="#44000000"
+        android:layout_marginEnd="52dp"
         android:gravity="center">
 
         <ImageButton
@@ -169,6 +156,7 @@
             android:id="@+id/progressBar"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_centerInParent="true"
             android:visibility="gone" />
     </RelativeLayout>
 

@@ -52,8 +52,7 @@ class StereoVideoActivity : AppCompatActivity() {
     private lateinit var tvBadgeTele: TextView
     private lateinit var progressBar: ProgressBar
 
-    // Vezérlők: OIS letiltás/engedélyezés és felbontás
-    private lateinit var btnToggleOis: Button
+    // Vezérlők: felbontás váltó
     private lateinit var btnToggleResolution: Button
 
     private lateinit var cameraManager: CameraManager
@@ -73,7 +72,6 @@ class StereoVideoActivity : AppCompatActivity() {
     // Hardveresen bevált, tökéletesen fedő fix arány
     private val CROP_RATIO = 2.79f
     private var isFullHd = true // Alapértelmezett: 1080p Full HD
-    private var isOisOff = true // Alapértelmezett: OIS KIKAPCSOLVA (merev sztereó tengely!)
 
     private var isSurfaceMainReady = false
     private var isSurfaceTeleReady = false
@@ -108,7 +106,6 @@ class StereoVideoActivity : AppCompatActivity() {
         tvBadgeTele = findViewById(R.id.tvBadgeTele)
         progressBar = findViewById(R.id.progressBar)
 
-        btnToggleOis = findViewById(R.id.btnToggleOis)
         btnToggleResolution = findViewById(R.id.btnToggleResolution)
 
         cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
@@ -126,14 +123,6 @@ class StereoVideoActivity : AppCompatActivity() {
             }
         }
 
-        btnToggleOis.setOnClickListener {
-            isOisOff = !isOisOff
-            updateOisButtonUI()
-            applySettingsToActiveSession()
-            val msg = if (isOisOff) "OIS kikapcsolva: Lencsék rögzítve, merev sztereó tengely!" else "OIS bekapcsolva!"
-            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
-        }
-
         btnToggleResolution.setOnClickListener {
             if (isRecording) {
                 Toast.makeText(this, "Felvétel közben nem módosítható a felbontás!", Toast.LENGTH_SHORT).show()
@@ -144,26 +133,14 @@ class StereoVideoActivity : AppCompatActivity() {
             startStereoPreviewSession()
         }
 
-        updateOisButtonUI()
         updateResolutionButtonUI()
-    }
-
-    private fun updateOisButtonUI() {
-        if (isOisOff) {
-            btnToggleOis.text = "OIS: KI (FIX TENGELY)"
-            btnToggleOis.setBackgroundColor(0xFFB91C1C.toInt()) // pirosas (biztonságos sztereóhoz)
-        } else {
-            btnToggleOis.text = "OIS: BE (MOZGÓ LENCSE)"
-            btnToggleOis.setBackgroundColor(0xFF475569.toInt()) // szürke
-        }
     }
 
     private fun updateResolutionButtonUI() {
         val resLabel = if (isFullHd) "1080p FHD" else "720p HD"
         btnToggleResolution.text = resLabel
         btnToggleResolution.setBackgroundColor(if (isFullHd) 0xFF059669.toInt() else 0xFF475569.toInt())
-        val oisLabel = if (isOisOff) "Fix tengely (OIS Ki)" else "OIS Be"
-        tvStatus.text = "S24 Sztereó ($resLabel @ 30fps | $oisLabel)"
+        tvStatus.text = "S24 Sztereó ($resLabel @ 30fps • Fix tengely)"
     }
 
     /**
@@ -233,17 +210,7 @@ class StereoVideoActivity : AppCompatActivity() {
             val template = if (isRecording) CameraDevice.TEMPLATE_RECORD else CameraDevice.TEMPLATE_PREVIEW
             val fpsRange = getTargetFpsRange()
 
-            val oisOptMode = if (isOisOff) 
-                CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF 
-            else 
-                CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON
-
-            val oisVideoMode = if (isOisOff) 
-                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF 
-            else 
-                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
-
-            // 1. Főkamera (Wide 2.79x crop + OIS vezérlés)
+            // 1. Főkamera (Wide 2.79x crop + Fix OIS letiltva a merev sztereó tengelyért)
             val reqWide = camera.createCaptureRequest(template).apply {
                 addTarget(surfaceMain)
                 if (isRecording) {
@@ -254,12 +221,12 @@ class StereoVideoActivity : AppCompatActivity() {
                 set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                 set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
-                set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, oisOptMode)
-                set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, oisVideoMode)
+                set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF)
+                set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
                 set(CaptureRequest.SCALER_CROP_REGION, calculateCropRect())
             }.build()
 
-            // 2. Telekamera (Tele natív 3x + OIS vezérlés)
+            // 2. Telekamera (Tele natív 3x + Fix OIS letiltva a merev sztereó tengelyért)
             val reqTele = camera.createCaptureRequest(template).apply {
                 addTarget(surfaceTele)
                 if (isRecording) {
@@ -270,8 +237,8 @@ class StereoVideoActivity : AppCompatActivity() {
                 set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                 set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
-                set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, oisOptMode)
-                set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, oisVideoMode)
+                set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF)
+                set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
             }.build()
 
             session.setRepeatingBurst(listOf(reqWide, reqTele), null, backgroundHandler)
@@ -399,16 +366,6 @@ class StereoVideoActivity : AppCompatActivity() {
                             try {
                                 val fpsRange = getTargetFpsRange()
 
-                                val oisOptMode = if (isOisOff) 
-                                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF 
-                                else 
-                                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON
-
-                                val oisVideoMode = if (isOisOff) 
-                                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF 
-                                else 
-                                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
-
                                 // 1. Főkamera előnézet (5-ös alkamera 2.79x crop, szigorú 4-pixel Bayer igazítás)
                                 val reqWide = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                                     addTarget(surfaceMain)
@@ -417,8 +374,8 @@ class StereoVideoActivity : AppCompatActivity() {
                                     set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                                     set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
                                     set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
-                                    set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, oisOptMode)
-                                    set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, oisVideoMode)
+                                    set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF)
+                                    set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
                                     set(CaptureRequest.SCALER_CROP_REGION, calculateCropRect())
                                 }.build()
 
@@ -430,16 +387,15 @@ class StereoVideoActivity : AppCompatActivity() {
                                     set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                                     set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
                                     set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
-                                    set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, oisOptMode)
-                                    set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, oisVideoMode)
+                                    set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF)
+                                    set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
                                 }.build()
 
                                 session.setRepeatingBurst(listOf(reqWide, reqTele), null, backgroundHandler)
 
                                 runOnUiThread {
                                     val resLabel = if (isFullHd) "Full HD 1080p" else "HD 720p"
-                                    val oisLabel = if (isOisOff) "Fix tengely" else "OIS aktív"
-                                    tvStatus.text = "S24 Sztereó Előnézet Kész ($resLabel @ 30fps | $oisLabel)"
+                                    tvStatus.text = "S24 Sztereó Előnézet Kész ($resLabel @ 30fps • Fix tengely)"
                                     btnRecord.isEnabled = true
                                 }
                             } catch (e: Exception) {
@@ -538,17 +494,7 @@ class StereoVideoActivity : AppCompatActivity() {
                             try {
                                 val fpsRange = getTargetFpsRange()
 
-                                val oisOptMode = if (isOisOff) 
-                                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF 
-                                else 
-                                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON
-
-                                val oisVideoMode = if (isOisOff) 
-                                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF 
-                                else 
-                                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
-
-                                // 1. Főkamera rögzítés (5-ös alkamera 2.79x crop + OIS letiltás)
+                                // 1. Főkamera rögzítés (5-ös alkamera 2.79x crop + Fix OIS letiltás)
                                 val reqWide = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                                     addTarget(surfaceMain)
                                     addTarget(recWideSurface)
@@ -557,12 +503,12 @@ class StereoVideoActivity : AppCompatActivity() {
                                     set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                                     set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
                                     set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
-                                    set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, oisOptMode)
-                                    set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, oisVideoMode)
+                                    set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF)
+                                    set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
                                     set(CaptureRequest.SCALER_CROP_REGION, calculateCropRect())
                                 }.build()
 
-                                // 2. Telekamera rögzítés (6-os alkamera natív 3x + OIS letiltás)
+                                // 2. Telekamera rögzítés (6-os alkamera natív 3x + Fix OIS letiltás)
                                 val reqTele = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                                     addTarget(surfaceTele)
                                     addTarget(recTeleSurface)
@@ -571,8 +517,8 @@ class StereoVideoActivity : AppCompatActivity() {
                                     set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                                     set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
                                     set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
-                                    set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, oisOptMode)
-                                    set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, oisVideoMode)
+                                    set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF)
+                                    set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
                                 }.build()
 
                                 session.setRepeatingBurst(listOf(reqWide, reqTele), null, backgroundHandler)
@@ -586,9 +532,7 @@ class StereoVideoActivity : AppCompatActivity() {
                                     btnRecord.isEnabled = true
                                     btnRecord.setImageResource(android.R.drawable.ic_media_pause)
                                     btnToggleResolution.isEnabled = false
-                                    btnToggleOis.isEnabled = false
-                                    val oisLabel = if (isOisOff) "Fix sztereó tengely" else "OIS aktív"
-                                    tvStatus.text = "SZINKRONIZÁLT SZTEREÓ FELVÉTEL ($resLabel @ 30fps | $oisLabel)!"
+                                    tvStatus.text = "SZINKRONIZÁLT SZTEREÓ FELVÉTEL ($resLabel @ 30fps • Fix tengely)!"
                                     tvTimer.visibility = View.VISIBLE
                                     recordingStartTime = SystemClock.uptimeMillis()
                                     timerHandler.post(timerRunnable)
@@ -662,7 +606,6 @@ class StereoVideoActivity : AppCompatActivity() {
                 progressBar.visibility = View.GONE
                 btnRecord.isEnabled = true
                 btnToggleResolution.isEnabled = true
-                btnToggleOis.isEnabled = true
                 btnRecord.setImageResource(android.R.drawable.ic_media_play)
                 tvTimer.visibility = View.GONE
                 tvStatus.text = "Sikeres mentés ($resLabel @ 30fps) a Movies/Stereo3D mappába ($filenameL & $filenameR)!"

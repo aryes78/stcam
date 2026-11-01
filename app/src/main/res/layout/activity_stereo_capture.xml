@@ -42,12 +42,12 @@
         android:textColor="#FFFFFF"
         android:textSize="14sp" />
 
-    <!-- Jobb oldali Exponáló sáv -->
+    <!-- Jobb oldali Exponáló sáv (52dp biztonságos margó a navigációs sávtól) -->
     <RelativeLayout
-        android:layout_width="100dp"
+        android:layout_width="wrap_content"
         android:layout_height="match_parent"
         android:layout_alignParentEnd="true"
-        android:background="#66000000"
+        android:layout_marginEnd="52dp"
         android:gravity="center">
 
         <ImageButton
@@ -62,6 +62,7 @@
             android:id="@+id/progressBar"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_centerInParent="true"
             android:visibility="gone" />
     </RelativeLayout>
 
