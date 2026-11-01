@@ -1,7 +1,14 @@
 package com.samsung.s24stereo
 
 import android.content.Context
-import android.hardware.camera2.*
+import android.graphics.ImageFormat
+import android.hardware.camera2.CameraCaptureSession
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraDevice
+import android.hardware.camera2.CameraManager
+import android.hardware.camera2.params.OutputConfiguration
+import android.hardware.camera2.params.SessionConfiguration
+import android.media.ImageReader
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -73,8 +80,9 @@ class CameraTesterActivity : AppCompatActivity() {
                 
                 for (pId in physicalIds) {
                     try {
-                        val pChars = chars0.getPhysicalCameraCharacteristics(pId)
-                        val focal = pChars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull() ?: 0f
+                        val pChars = cameraManager.getCameraCharacteristics(pId)
+                        val focalArray: FloatArray? = pChars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+                        val focal: Float = if (focalArray != null && focalArray.isNotEmpty()) focalArray[0] else 0f
                         val role = when {
                             focal < 3.0f -> "0.6× Ultraszéles (13mm ekv)"
                             focal in 4.5f..6.0f -> {

@@ -96,17 +96,23 @@ class StereoCaptureActivity : AppCompatActivity() {
             val chars0 = cameraManager.getCameraCharacteristics("0")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 for (pId in chars0.physicalCameraIds) {
-                    val pChars = chars0.getPhysicalCameraCharacteristics(pId)
-                    val focal = pChars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull() ?: 0f
-                    if (focal in 4.5f..6.0f) {
-                        widePhysicalId = pId // Főkamera (5.4mm)
-                    } else if (focal > 6.0f) {
-                        telePhysicalId = pId // 3x Telefotó (7.0mm)
+                    try {
+                        val pChars = cameraManager.getCameraCharacteristics(pId)
+                        val focalArray: FloatArray? = pChars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+                        val focal: Float = if (focalArray != null && focalArray.isNotEmpty()) focalArray[0] else 0f
+                        if (focal in 4.5f..6.0f) {
+                            widePhysicalId = pId // Főkamera (5.4mm)
+                        } else if (focal > 6.0f) {
+                            telePhysicalId = pId // 3x Telefotó (7.0mm)
+                        }
+                    } catch (e: Exception) {
+                        // ignore
                     }
                 }
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            widePhysicalId = "5"
+            telePhysicalId = "6"
         }
     }
 
