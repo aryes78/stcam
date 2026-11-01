@@ -11,6 +11,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - name: Wait 20 seconds for other workflows to unpack files
+        run: |
+          echo "Várakozás 20 másodpercig, amíg a fájlok kicsomagolása befejeződik..."
+          sleep 20
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
