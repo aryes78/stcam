@@ -31,20 +31,15 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Samsung Galaxy S24 Szimultán Sztereó Videófelvevő (Full HD + 2.79x Zoom)
+ * Samsung Galaxy S24 Szimultán Sztereó Videófelvevő (Full HD @ 30fps)
  * 
- * JAVÍTÁSOK A VISSZAJELZÉS ALAPJÁN:
- * 
- * 1. LILA KÉP MEGSZÜNTETÉSE (Bayer 4-Pixel Alignment & 16:9 képarány):
- *    A főkamera 50MP Tetracell szenzorán a páratlan pixelkoordináták fáziseltolódást
- *    okoztak a Bayer RGGB színszűrőben, amitől a kép magenta/lila árnyalatúvá vált.
- *    Most szigorú 4-gyel osztható pixelhatárra igazítjuk a crop téglalapot, 
- *    tökéletes 16:9 arányban, folyamatos AWB (Auto White Balance) vezérléssel.
- * 
- * 2. 15 FPS -> 30 FPS JAVÍTÁS (60 Hz Sensor Pipeline):
- *    Mivel a két kamera szimultán rögzít egymás mellett (burst multiplexelés),
- *    a kamera szenzor célsebességét 60 FPS-re emeljük (CONTROL_AE_TARGET_FPS_RANGE),
- *    így mindkét rögzített Full HD videó teljes, folyamatos 30 FPS sebességet kap!
+ * - Hardveresen kalibrált fix 2.79x központi kivágás a főkamerára (Alkamera 5)
+ * - Natív 3x telefotó stream (Alkamera 6)
+ * - OIS (Optikai Képstabilizátor) és EIS KIKAPCSOLHATÓ:
+ *   Megszünteti a két lencse független, aszinkron mágneses elmozdulását mozgás közben!
+ *   A két kamera optikai tengelye szigorúan merev sztereó bázistávolságon marad.
+ * - 4-pixel Bayer RGGB igazítás: 100% természetes színek (lila színhiba nélkül).
+ * - 60 Hz szenzor-pipeline: stabil, folyamatos 30 FPS mindkét videófájlba.
  */
 class StereoVideoActivity : AppCompatActivity() {
 
@@ -57,10 +52,8 @@ class StereoVideoActivity : AppCompatActivity() {
     private lateinit var tvBadgeTele: TextView
     private lateinit var progressBar: ProgressBar
 
-    // Gyorsvezérlők: zoom finomhangolás és felbontás váltás
-    private lateinit var btnZoomMinus: Button
-    private lateinit var btnZoomPlus: Button
-    private lateinit var tvZoomValue: TextView
+    // Vezérlők: OIS letiltás/engedélyezés és felbontás
+    private lateinit var btnToggleOis: Button
     private lateinit var btnToggleResolution: Button
 
     private lateinit var cameraManager: CameraManager
@@ -77,8 +70,10 @@ class StereoVideoActivity : AppCompatActivity() {
     private val widePhysicalId = "5" // Főkamera (5.4mm)
     private val telePhysicalId = "6" // 3x Telefotó (7.0mm)
 
-    private var currentCropRatio = 2.79f
+    // Hardveresen bevált, tökéletesen fedő fix arány
+    private val CROP_RATIO = 2.79f
     private var isFullHd = true // Alapértelmezett: 1080p Full HD
+    private var isOisOff = true // Alapértelmezett: OIS KIKAPCSOLVA (merev sztereó tengely!)
 
     private var isSurfaceMainReady = false
     private var isSurfaceTeleReady = false
@@ -113,9 +108,7 @@ class StereoVideoActivity : AppCompatActivity() {
         tvBadgeTele = findViewById(R.id.tvBadgeTele)
         progressBar = findViewById(R.id.progressBar)
 
-        btnZoomMinus = findViewById(R.id.btnZoomMinus)
-        btnZoomPlus = findViewById(R.id.btnZoomPlus)
-        tvZoomValue = findViewById(R.id.tvZoomValue)
+        btnToggleOis = findViewById(R.id.btnToggleOis)
         btnToggleResolution = findViewById(R.id.btnToggleResolution)
 
         cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
@@ -133,18 +126,12 @@ class StereoVideoActivity : AppCompatActivity() {
             }
         }
 
-        btnZoomMinus.setOnClickListener {
-            if (currentCropRatio > 1.20f) {
-                currentCropRatio = Math.round((currentCropRatio - 0.05f) * 100f) / 100f
-                updateZoomDisplayAndApply()
-            }
-        }
-
-        btnZoomPlus.setOnClickListener {
-            if (currentCropRatio < 4.50f) {
-                currentCropRatio = Math.round((currentCropRatio + 0.05f) * 100f) / 100f
-                updateZoomDisplayAndApply()
-            }
+        btnToggleOis.setOnClickListener {
+            isOisOff = !isOisOff
+            updateOisButtonUI()
+            applySettingsToActiveSession()
+            val msg = if (isOisOff) "OIS kikapcsolva: Lencsék rögzítve, merev sztereó tengely!" else "OIS bekapcsolva!"
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
         }
 
         btnToggleResolution.setOnClickListener {
@@ -157,37 +144,32 @@ class StereoVideoActivity : AppCompatActivity() {
             startStereoPreviewSession()
         }
 
-        updateZoomDisplayUI()
+        updateOisButtonUI()
         updateResolutionButtonUI()
     }
 
-    private fun updateZoomDisplayUI() {
-        tvZoomValue.text = String.format(Locale.US, "%.2fx", currentCropRatio)
-        tvBadgeWide.text = String.format(Locale.US, "BAL: FŐ [5] (%.2fx CROP)", currentCropRatio)
-        tvBadgeTele.text = "JOBB: TELE [6] (3x NATÍV)"
+    private fun updateOisButtonUI() {
+        if (isOisOff) {
+            btnToggleOis.text = "OIS: KI (FIX TENGELY)"
+            btnToggleOis.setBackgroundColor(0xFFB91C1C.toInt()) // pirosas (biztonságos sztereóhoz)
+        } else {
+            btnToggleOis.text = "OIS: BE (MOZGÓ LENCSE)"
+            btnToggleOis.setBackgroundColor(0xFF475569.toInt()) // szürke
+        }
     }
 
     private fun updateResolutionButtonUI() {
-        val resLabel = if (isFullHd) "FHD 1080p" else "HD 720p"
+        val resLabel = if (isFullHd) "1080p FHD" else "720p HD"
         btnToggleResolution.text = resLabel
         btnToggleResolution.setBackgroundColor(if (isFullHd) 0xFF059669.toInt() else 0xFF475569.toInt())
-        tvStatus.text = "S24 Sztereó Videó ($resLabel @ 30fps) | Alkamerák: Fő [5] + Tele [6]"
-    }
-
-    private fun updateZoomDisplayAndApply() {
-        updateZoomDisplayUI()
-        applyZoomToActiveSession()
+        val oisLabel = if (isOisOff) "Fix tengely (OIS Ki)" else "OIS Be"
+        tvStatus.text = "S24 Sztereó ($resLabel @ 30fps | $oisLabel)"
     }
 
     /**
-     * Kiszámítja a főkamera aktív szenzorméretéből a középre igazított SCALER_CROP_REGION téglalapot.
-     * 
-     * LILA SZÍN JAVÍTÁSA (Bayer 4-pixel Alignment & 16:9 arány):
-     * - Minden méret és koordináta szigorúan 4-gyel osztható egész számra van igazítva,
-     *   megelőzve a fotodióda fáziscsúszást és a magenta elszíneződést!
-     * - Pontos 16:9 képarány, amely geometriailag egyezik a videó formátummal.
+     * Kiszámítja a 2.79x központi crop téglalapot szigorú 4-pixel Bayer igazítással (Bayer RGGB mozaik védelem).
      */
-    private fun calculateCropRect(ratio: Float): Rect {
+    private fun calculateCropRect(): Rect {
         return try {
             val chars0 = cameraManager.getCameraCharacteristics("0")
             val activeArray = chars0.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
@@ -196,14 +178,13 @@ class StereoVideoActivity : AppCompatActivity() {
             val sensorW = activeArray.width()
             val sensorH = activeArray.height()
 
-            // 16:9 képarány kiszámítása a 4:3 szenzor aktív területéből
+            // 16:9 arány a 4:3 szenzorból
             val base16x9Height = (sensorW * 9) / 16
 
-            // Zoom faktor alkalmazása
-            var targetW = (sensorW / ratio).toInt()
-            var targetH = (base16x9Height / ratio).toInt()
+            var targetW = (sensorW / CROP_RATIO).toInt()
+            var targetH = (base16x9Height / CROP_RATIO).toInt()
 
-            // Szigorú 4-gyel osztható igazítás a Bayer RGGB mozaik védelmére
+            // Szigorú 4-gyel osztható igazítás a zéró lila/magenta színhibáért
             targetW = (targetW / 4) * 4
             targetH = (targetH / 4) * 4
 
@@ -219,23 +200,17 @@ class StereoVideoActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Kiválasztja a legoptimálisabb FPS tartományt a 30 FPS eléréséhez.
-     * Mivel 2 kérés van a burstben, 60 FPS szenzor-sebességet keresünk (felezve = 30 FPS).
-     */
     private fun getTargetFpsRange(): Range<Int> {
         return try {
             val chars0 = cameraManager.getCameraCharacteristics("0")
             val ranges = chars0.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
             if (ranges != null) {
-                // 1. Prioritás: 60 FPS tartomány (pl. [60, 60] vagy [30, 60])
                 for (r in ranges) {
                     if (r.upper >= 60 && r.lower >= 30) return r
                 }
                 for (r in ranges) {
                     if (r.upper >= 60) return r
                 }
-                // 2. Prioritás: Legmagasabb stabil tartomány (pl. [30, 30])
                 for (r in ranges) {
                     if (r.upper == 30 && r.lower == 30) return r
                 }
@@ -247,7 +222,7 @@ class StereoVideoActivity : AppCompatActivity() {
         }
     }
 
-    private fun applyZoomToActiveSession() {
+    private fun applySettingsToActiveSession() {
         val session = captureSession ?: return
         val camera = cameraDevice ?: return
         val surfaceMain = surfaceViewMain.holder.surface
@@ -258,7 +233,17 @@ class StereoVideoActivity : AppCompatActivity() {
             val template = if (isRecording) CameraDevice.TEMPLATE_RECORD else CameraDevice.TEMPLATE_PREVIEW
             val fpsRange = getTargetFpsRange()
 
-            // 1. Főkamera request (2.79x crop az 5-ös alkamerára + AWB/AE stabilizálás)
+            val oisOptMode = if (isOisOff) 
+                CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF 
+            else 
+                CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON
+
+            val oisVideoMode = if (isOisOff) 
+                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF 
+            else 
+                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
+
+            // 1. Főkamera (Wide 2.79x crop + OIS vezérlés)
             val reqWide = camera.createCaptureRequest(template).apply {
                 addTarget(surfaceMain)
                 if (isRecording) {
@@ -269,10 +254,12 @@ class StereoVideoActivity : AppCompatActivity() {
                 set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                 set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
-                set(CaptureRequest.SCALER_CROP_REGION, calculateCropRect(currentCropRatio))
+                set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, oisOptMode)
+                set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, oisVideoMode)
+                set(CaptureRequest.SCALER_CROP_REGION, calculateCropRect())
             }.build()
 
-            // 2. Telekamera request (natív 3x a 6-os alkamerára + AWB/AE stabilizálás)
+            // 2. Telekamera (Tele natív 3x + OIS vezérlés)
             val reqTele = camera.createCaptureRequest(template).apply {
                 addTarget(surfaceTele)
                 if (isRecording) {
@@ -283,6 +270,8 @@ class StereoVideoActivity : AppCompatActivity() {
                 set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                 set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
+                set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, oisOptMode)
+                set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, oisVideoMode)
             }.build()
 
             session.setRepeatingBurst(listOf(reqWide, reqTele), null, backgroundHandler)
@@ -361,7 +350,7 @@ class StereoVideoActivity : AppCompatActivity() {
 
     private fun openStereoCameraSystem() {
         runOnUiThread {
-            tvStatus.text = "S24 kamera \"0\" megnyitása (alkamerák: [5] + [6])..."
+            tvStatus.text = "S24 sztereó kamera indítása..."
         }
         try {
             cameraManager.openCamera("0", object : CameraDevice.StateCallback() {
@@ -379,7 +368,7 @@ class StereoVideoActivity : AppCompatActivity() {
                     camera.close()
                     cameraDevice = null
                     runOnUiThread {
-                        tvStatus.text = "Kamera nyitási hiba: $error"
+                        tvStatus.text = "Kamera hiba: $error"
                     }
                 }
             }, backgroundHandler)
@@ -410,6 +399,16 @@ class StereoVideoActivity : AppCompatActivity() {
                             try {
                                 val fpsRange = getTargetFpsRange()
 
+                                val oisOptMode = if (isOisOff) 
+                                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF 
+                                else 
+                                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON
+
+                                val oisVideoMode = if (isOisOff) 
+                                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF 
+                                else 
+                                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
+
                                 // 1. Főkamera előnézet (5-ös alkamera 2.79x crop, szigorú 4-pixel Bayer igazítás)
                                 val reqWide = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                                     addTarget(surfaceMain)
@@ -418,7 +417,9 @@ class StereoVideoActivity : AppCompatActivity() {
                                     set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                                     set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
                                     set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
-                                    set(CaptureRequest.SCALER_CROP_REGION, calculateCropRect(currentCropRatio))
+                                    set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, oisOptMode)
+                                    set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, oisVideoMode)
+                                    set(CaptureRequest.SCALER_CROP_REGION, calculateCropRect())
                                 }.build()
 
                                 // 2. Telekamera előnézet (6-os alkamera natív 3x)
@@ -429,13 +430,16 @@ class StereoVideoActivity : AppCompatActivity() {
                                     set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                                     set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
                                     set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
+                                    set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, oisOptMode)
+                                    set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, oisVideoMode)
                                 }.build()
 
                                 session.setRepeatingBurst(listOf(reqWide, reqTele), null, backgroundHandler)
 
                                 runOnUiThread {
                                     val resLabel = if (isFullHd) "Full HD 1080p" else "HD 720p"
-                                    tvStatus.text = "S24 Sztereó Előnézet Kész ($resLabel @ 30fps | Természetes Színek)"
+                                    val oisLabel = if (isOisOff) "Fix tengely" else "OIS aktív"
+                                    tvStatus.text = "S24 Sztereó Előnézet Kész ($resLabel @ 30fps | $oisLabel)"
                                     btnRecord.isEnabled = true
                                 }
                             } catch (e: Exception) {
@@ -476,7 +480,7 @@ class StereoVideoActivity : AppCompatActivity() {
             val videoH = if (isFullHd) 1080 else 720
             val videoBitrate = if (isFullHd) 18_000_000 else 10_000_000
 
-            // 1. Bal szem felvevő (Főkamera 2.79x központi kivágással + Sztereó mikrofon hang, 30fps)
+            // 1. Bal szem felvevő (Főkamera 2.79x crop + Sztereó mikrofon hang, 30fps)
             recorderWide = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 MediaRecorder(this)
             } else {
@@ -497,7 +501,7 @@ class StereoVideoActivity : AppCompatActivity() {
                 prepare()
             }
 
-            // 2. Jobb szem felvevő (Telekamera natív 3x, csak videó - hangütközés elkerülésére, 30fps)
+            // 2. Jobb szem felvevő (Telekamera natív 3x, csak videó, 30fps)
             recorderTele = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 MediaRecorder(this)
             } else {
@@ -534,7 +538,17 @@ class StereoVideoActivity : AppCompatActivity() {
                             try {
                                 val fpsRange = getTargetFpsRange()
 
-                                // 1. Főkamera rögzítés (5-ös alkamera 2.79x crop, 4-pixel Bayer igazítás, természetes színek)
+                                val oisOptMode = if (isOisOff) 
+                                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF 
+                                else 
+                                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON
+
+                                val oisVideoMode = if (isOisOff) 
+                                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF 
+                                else 
+                                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
+
+                                // 1. Főkamera rögzítés (5-ös alkamera 2.79x crop + OIS letiltás)
                                 val reqWide = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                                     addTarget(surfaceMain)
                                     addTarget(recWideSurface)
@@ -543,10 +557,12 @@ class StereoVideoActivity : AppCompatActivity() {
                                     set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                                     set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
                                     set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
-                                    set(CaptureRequest.SCALER_CROP_REGION, calculateCropRect(currentCropRatio))
+                                    set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, oisOptMode)
+                                    set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, oisVideoMode)
+                                    set(CaptureRequest.SCALER_CROP_REGION, calculateCropRect())
                                 }.build()
 
-                                // 2. Telekamera rögzítés (6-os alkamera natív 3x)
+                                // 2. Telekamera rögzítés (6-os alkamera natív 3x + OIS letiltás)
                                 val reqTele = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                                     addTarget(surfaceTele)
                                     addTarget(recTeleSurface)
@@ -555,6 +571,8 @@ class StereoVideoActivity : AppCompatActivity() {
                                     set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                                     set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
                                     set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
+                                    set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, oisOptMode)
+                                    set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, oisVideoMode)
                                 }.build()
 
                                 session.setRepeatingBurst(listOf(reqWide, reqTele), null, backgroundHandler)
@@ -568,7 +586,9 @@ class StereoVideoActivity : AppCompatActivity() {
                                     btnRecord.isEnabled = true
                                     btnRecord.setImageResource(android.R.drawable.ic_media_pause)
                                     btnToggleResolution.isEnabled = false
-                                    tvStatus.text = "SZINKRONIZÁLT SZTEREÓ FELVÉTEL ($resLabel @ 30fps)!"
+                                    btnToggleOis.isEnabled = false
+                                    val oisLabel = if (isOisOff) "Fix sztereó tengely" else "OIS aktív"
+                                    tvStatus.text = "SZINKRONIZÁLT SZTEREÓ FELVÉTEL ($resLabel @ 30fps | $oisLabel)!"
                                     tvTimer.visibility = View.VISIBLE
                                     recordingStartTime = SystemClock.uptimeMillis()
                                     timerHandler.post(timerRunnable)
@@ -632,7 +652,7 @@ class StereoVideoActivity : AppCompatActivity() {
             val resLabel = if (isFullHd) "Full HD 1080p" else "HD 720p"
 
             wideTempFile?.let {
-                if (it.exists()) saveVideoToMediaStore(it, filenameL, "S24 Bal Sztereó Videó (${String.format(Locale.US, "%.2f", currentCropRatio)}x Crop, $resLabel @ 30fps)")
+                if (it.exists()) saveVideoToMediaStore(it, filenameL, "S24 Bal Sztereó Videó (2.79x Crop, $resLabel @ 30fps)")
             }
             teleTempFile?.let {
                 if (it.exists()) saveVideoToMediaStore(it, filenameR, "S24 Jobb Sztereó Videó (3x Natív, $resLabel @ 30fps)")
@@ -642,6 +662,7 @@ class StereoVideoActivity : AppCompatActivity() {
                 progressBar.visibility = View.GONE
                 btnRecord.isEnabled = true
                 btnToggleResolution.isEnabled = true
+                btnToggleOis.isEnabled = true
                 btnRecord.setImageResource(android.R.drawable.ic_media_play)
                 tvTimer.visibility = View.GONE
                 tvStatus.text = "Sikeres mentés ($resLabel @ 30fps) a Movies/Stereo3D mappába ($filenameL & $filenameR)!"

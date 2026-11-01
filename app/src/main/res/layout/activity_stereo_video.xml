@@ -4,13 +4,13 @@
     android:layout_height="match_parent"
     android:background="#000000">
 
-    <!-- Dupla előnézet: Bal oldal Főkamera (2.79x Scaler Crop), Jobb oldal Telekamera (Natív 3x) -->
+    <!-- Dupla tiszta előnézet: Bal oldal Főkamera (2.79x crop), Jobb oldal Telekamera (3x natív) -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="horizontal">
 
-        <!-- Bal oldal: Főkamera (Hardveres 2.79x crop az egyforma mérethez) -->
+        <!-- Bal oldal: Főkamera -->
         <FrameLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
@@ -32,7 +32,7 @@
                 android:paddingRight="10dp"
                 android:paddingTop="4dp"
                 android:paddingBottom="4dp"
-                android:text="BAL: FŐKAMERA [2.79x CROP]"
+                android:text="BAL: FŐ [5] (2.79x)"
                 android:textColor="#38BDF8"
                 android:textSize="11sp"
                 android:textStyle="bold" />
@@ -65,7 +65,7 @@
                 android:paddingRight="10dp"
                 android:paddingTop="4dp"
                 android:paddingBottom="4dp"
-                android:text="JOBB: TELE [3x NATÍV]"
+                android:text="JOBB: TELE [6] (3x NATÍV)"
                 android:textColor="#34D399"
                 android:textSize="11sp"
                 android:textStyle="bold" />
@@ -107,77 +107,45 @@
             android:paddingRight="12dp"
             android:paddingTop="6dp"
             android:paddingBottom="6dp"
-            android:text="S24 Full HD Sztereó Videó (Tartsa vízszintesen!)"
+            android:text="S24 Full HD Sztereó Videó (30fps • Fix tengely)"
             android:textColor="#FFFFFF"
             android:textSize="12sp" />
     </LinearLayout>
 
-    <!-- Bal oldali Gyorsbeállítás Panel: Zoom finomhangolás & Felbontás -->
+    <!-- Bal felső sarok: Diszkrét OIS & Felbontás gombok -->
     <LinearLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_alignParentStart="true"
-        android:layout_centerVertical="true"
-        android:layout_marginStart="12dp"
-        android:orientation="vertical"
-        android:background="#99000000"
-        android:padding="8dp">
+        android:layout_alignParentTop="true"
+        android:layout_margin="12dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
 
-        <TextView
+        <Button
+            android:id="@+id/btnToggleOis"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="FŐKAMERA ZOOM"
-            android:textColor="#94A3B8"
+            android:layout_height="36dp"
+            android:text="OIS: KI (FIX TENGELY)"
             android:textSize="10sp"
             android:textStyle="bold"
-            android:layout_gravity="center_horizontal" />
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginTop="4dp">
-
-            <Button
-                android:id="@+id/btnZoomMinus"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:text="-"
-                android:textSize="18sp"
-                android:textColor="#FFFFFF"
-                android:backgroundTint="#334155" />
-
-            <TextView
-                android:id="@+id/tvZoomValue"
-                android:layout_width="60dp"
-                android:layout_height="wrap_content"
-                android:text="2.79x"
-                android:gravity="center"
-                android:textColor="#38BDF8"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-
-            <Button
-                android:id="@+id/btnZoomPlus"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:text="+"
-                android:textSize="18sp"
-                android:textColor="#FFFFFF"
-                android:backgroundTint="#334155" />
-        </LinearLayout>
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#B91C1C"
+            android:paddingLeft="10dp"
+            android:paddingRight="10dp" />
 
         <Button
             android:id="@+id/btnToggleResolution"
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="36dp"
-            android:layout_marginTop="8dp"
-            android:text="FHD 1080p"
-            android:textSize="11sp"
+            android:layout_marginStart="8dp"
+            android:text="1080p FHD"
+            android:textSize="10sp"
             android:textStyle="bold"
             android:textColor="#FFFFFF"
-            android:backgroundTint="#059669" />
+            android:backgroundTint="#059669"
+            android:paddingLeft="10dp"
+            android:paddingRight="10dp" />
     </LinearLayout>
 
     <!-- Jobb oldali Felvétel vezérlő panel -->
@@ -185,7 +153,7 @@
         android:layout_width="100dp"
         android:layout_height="match_parent"
         android:layout_alignParentEnd="true"
-        android:background="#66000000"
+        android:background="#44000000"
         android:gravity="center">
 
         <ImageButton

@@ -11,8 +11,8 @@ android {
         applicationId = "com.samsung.s24stereo"
         minSdk = 30 // Android 11 (getConcurrentCameraIds támogatás)
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
