@@ -3,9 +3,14 @@ name: Build Samsung S24 Stereo Camera APK
 on:
   push:
     branches: [ main, master ]
+    tags:
+      - 'v*'
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -13,11 +18,27 @@ jobs:
     steps:
       - name: Wait 30 seconds for other workflows to unpack files
         run: |
-          echo "Várakozás 30 másodpercig, amíg a fájlok kicsomagolása befejeződik..."
+          echo "Várakozás 30 másodpercig, amíg a másik workflow befejezi a kicsomagolást..."
           sleep 30
 
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure gradle files are ready
+        run: |
+          if [ ! -f "gradlew" ] && [ -d "SamsungS24StereoCamera" ]; then
+            cd SamsungS24StereoCamera
+          fi
+          if [ ! -f "gradlew" ]; then
+            echo "gradlew nem található, keresés a csomagolt zip fájlokban..."
+            ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
+            if [ -n "$ZIP_FILE" ]; then
+              echo "Automatikus kibontás: $ZIP_FILE"
+              unzip -o "$ZIP_FILE"
+            fi
+          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -43,3 +64,24 @@ jobs:
         with:
           name: Samsung-S24-Stereo-Camera-Debug-APK
           path: '**/build/outputs/apk/debug/*.apk'
+
+      # Automata GitHub Release létrehozása és APK csatolása
+      - name: Create GitHub Release with APK
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        continue-on-error: true
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'latest' }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'Samsung S24 Sztereó Kamera (Legfrissebb APK)' }}
+          body: |
+            Automata APK kiadás a Samsung Galaxy S24 sztereó videó- és fényképező alkalmazáshoz.
+            - Full HD 1080p @ 30fps
+            - Hardveres 2.79x központi zoom a főkamerára
+            - OIS (optikai stabilizátor) kikapcsolva a merev, párhuzamos sztereó tengelyért
+            - Tiszta, zavartalan képernyőnézet
+          draft: false
+          prerelease: false
+          files: |
+            **/build/outputs/apk/debug/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
