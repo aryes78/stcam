@@ -208,10 +208,8 @@ class StereoCaptureActivity : AppCompatActivity() {
                 val outStillMain = OutputConfiguration(stillMainSurface).apply { setPhysicalCameraId(widePhysicalId) }
                 val outStillTele = OutputConfiguration(stillTeleSurface).apply { setPhysicalCameraId(telePhysicalId) }
 
-                val sessionConfig = SessionConfiguration(
-                    SessionConfiguration.SESSION_REGULAR,
+                camera.createCaptureSessionByOutputConfigurations(
                     listOf(outPreviewMain, outPreviewTele, outStillMain, outStillTele),
-                    mainExecutor,
                     object : CameraCaptureSession.StateCallback() {
                         override fun onConfigured(session: CameraCaptureSession) {
                             captureSession = session
@@ -233,9 +231,9 @@ class StereoCaptureActivity : AppCompatActivity() {
                                 tvStatus.text = "Nem sikerült a sztereó konfiguráció."
                             }
                         }
-                    }
+                    },
+                    backgroundHandler
                 )
-                camera.createCaptureSession(sessionConfig)
             } else {
                 tvStatus.text = "Android 9+ szükséges a fizikai multi-kamerához."
             }

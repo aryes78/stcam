@@ -130,10 +130,8 @@ class CameraTesterActivity : AppCompatActivity() {
                                 setPhysicalCameraId(telePhysicalId)
                             }
 
-                            val sessionConfig = SessionConfiguration(
-                                SessionConfiguration.SESSION_REGULAR,
+                            camera.createCaptureSessionByOutputConfigurations(
                                 listOf(configWide, configTele),
-                                mainExecutor,
                                 object : CameraCaptureSession.StateCallback() {
                                     override fun onConfigured(session: CameraCaptureSession) {
                                         log("★★★ TELJES SIKER! ★★★")
@@ -151,9 +149,9 @@ class CameraTesterActivity : AppCompatActivity() {
                                         readerWide.close()
                                         readerTele.close()
                                     }
-                                }
+                                },
+                                backgroundHandler
                             )
-                            camera.createCaptureSession(sessionConfig)
                         } catch (e: Exception) {
                             log("Session hiba: ${e.message}")
                             camera.close()
