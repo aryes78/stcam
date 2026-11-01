@@ -20,21 +20,19 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # Automatikusan telepíti a hivatalos Gradle 8.10.2-t a virtuális gépre
       - name: Set up Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
 
-      # Automatikus könyvtár-keresés és fallback (ha nincs gradlew, globális gradle-t használ)
-      - name: Build Debug APK
+      - name: Build Debug APK (with subfolder detection & fallback)
         run: |
-          # 1. Ha a projekt almappában van (pl. SamsungS24StereoCamera), belépünk oda
+          # 1. Ha a projekt almappában van (pl. SamsungS24StereoCamera), lépjünk be
           if [ ! -f "build.gradle.kts" ] && [ -d "SamsungS24StereoCamera" ]; then
             echo "Belépés a SamsungS24StereoCamera mappába..."
             cd SamsungS24StereoCamera
           elif [ ! -f "build.gradle.kts" ]; then
-            TARGET_DIR=$(find . -maxdepth 2 -name "build.gradle.kts" -not -path "*/app/*" -exec dirname {} \; | head -n 1)
+            TARGET_DIR=$(find . -maxdepth 2 -name "build.gradle.kts" -not -path "*/app/*" -exec dirname {} ; | head -n 1)
             if [ -n "$TARGET_DIR" ]; then
               echo "Projekt megtalálva: $TARGET_DIR, belépés..."
               cd "$TARGET_DIR"
@@ -44,17 +42,20 @@ jobs:
           echo "Aktuális munkakönyvtár: $(pwd)"
           ls -la
 
-          # 2. Ha létezik a gradlew wrapper, azt futtatjuk; ha nem, a telepített Gradle parancsot!
+          # 2. Automatikus XML entitás tisztítás (kivédi az árva '&' karakter miatti hibákat)
+          echo "XML fájlok ellenőrzése és szanálása..."
+          find . -name "*.xml" -type f -exec sed -i 's/ & / &amp; /g' {} +
+
+          # 3. Ha létezik gradlew, futtatási jog megadása és futtatás
           if [ -f "./gradlew" ]; then
-            echo "✓ gradlew megtalálva, futtatás..."
+            echo "✓ ./gradlew megtalálva, végrehajtási jog megadása..."
             chmod +x ./gradlew
             ./gradlew assembleDebug --stacktrace
           else
-            echo "ℹ gradlew nem található a mappában, globális Gradle 8.10.2 futtatása..."
+            echo "ℹ ./gradlew nincs jelen, globális Gradle 8.10.2 használata..."
             gradle assembleDebug --stacktrace
           fi
 
-      # Bármilyen mappamélységben megtalálja és feltölti az elkészült APK-t
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
