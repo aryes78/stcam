@@ -55,10 +55,13 @@ class StereoCaptureActivity : AppCompatActivity() {
     private lateinit var backgroundThread: HandlerThread
     private lateinit var backgroundHandler: Handler
 
-    // Samsung S24 hardveresen tesztelt fizikai azonosítók (SM-S921B e1s)
-    private var widePhysicalId = "5" // 5.4mm Wide 1x
-    private var telePhysicalId = "6" // 7.0mm Tele 3x
+    // Samsung S24 hardveresen igazolt fizikai lencsék (SM-S921B)
+    private var widePhysicalId = "5" // 5.4mm Wide (Bal szem)
+    private var telePhysicalId = "6" // 7.0mm Tele 3x (Jobb szem)
     private val FOCAL_CROP_RATIO = 2.79f
+
+    private var isSurfaceMainReady = false
+    private var isSurfaceTeleReady = false
 
     private var capturedMainBytes: ByteArray? = null
     private var capturedTeleBytes: ByteArray? = null
@@ -80,15 +83,46 @@ class StereoCaptureActivity : AppCompatActivity() {
             triggerStereoCapture()
         }
 
+        initSurfaceHolders()
+    }
+
+    private fun initSurfaceHolders() {
+        // Fix buffer méret beállítása, megelőzve a GPU "Surface abandoned" hibát
+        surfaceViewMain.holder.setFixedSize(1280, 720)
         surfaceViewMain.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
-                openStereoCameraSystem()
+                isSurfaceMainReady = true
+                checkSurfacesAndOpen()
             }
-            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
+            override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {}
             override fun surfaceDestroyed(holder: SurfaceHolder) {
+                isSurfaceMainReady = false
                 closeCameras()
             }
         })
+
+        surfaceViewTele.holder.setFixedSize(1280, 720)
+        surfaceViewTele.holder.addCallback(object : SurfaceHolder.Callback {
+            override fun surfaceCreated(holder: SurfaceHolder) {
+                isSurfaceTeleReady = true
+                checkSurfacesAndOpen()
+            }
+            override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {}
+            override fun surfaceDestroyed(holder: SurfaceHolder) {
+                isSurfaceTeleReady = false
+                closeCameras()
+            }
+        })
+    }
+
+    private fun checkSurfacesAndOpen() {
+        if (isSurfaceMainReady && isSurfaceTeleReady && cameraDevice == null) {
+            val s1 = surfaceViewMain.holder.surface
+            val s2 = surfaceViewTele.holder.surface
+            if (s1 != null && s1.isValid && s2 != null && s2.isValid) {
+                openStereoCameraSystem()
+            }
+        }
     }
 
     private fun detectPhysicalCameraIds() {
@@ -119,6 +153,7 @@ class StereoCaptureActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         startBackgroundThread()
+        checkSurfacesAndOpen()
     }
 
     override fun onPause() {
@@ -170,7 +205,6 @@ class StereoCaptureActivity : AppCompatActivity() {
                 }, backgroundHandler)
             }
 
-            // Logikai [0] kamera megnyitása
             cameraManager.openCamera("0", object : CameraDevice.StateCallback() {
                 override fun onOpened(camera: CameraDevice) {
                     cameraDevice = camera
@@ -202,6 +236,11 @@ class StereoCaptureActivity : AppCompatActivity() {
             val stillMainSurface = imageReaderMain?.surface ?: return
             val stillTeleSurface = imageReaderTele?.surface ?: return
 
+            if (!surfaceMain.isValid || !surfaceTele.isValid) {
+                tvStatus.text = "Kijelző felület nem érvényes, újrapróbálkozás..."
+                return
+            }
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 val outPreviewMain = OutputConfiguration(surfaceMain).apply { setPhysicalCameraId(widePhysicalId) }
                 val outPreviewTele = OutputConfiguration(surfaceTele).apply { setPhysicalCameraId(telePhysicalId) }
@@ -221,14 +260,14 @@ class StereoCaptureActivity : AppCompatActivity() {
 
                             session.setRepeatingRequest(previewRequest, null, backgroundHandler)
                             runOnUiThread {
-                                tvStatus.text = "Sztereó előnézet aktív (Fő: 24mm | Tele: 67mm)"
+                                tvStatus.text = "S24 Sztereó Előnézet Aktív (1x Fő + 3x Tele)"
                                 btnShutter.isEnabled = true
                             }
                         }
 
                         override fun onConfigureFailed(session: CameraCaptureSession) {
                             runOnUiThread {
-                                tvStatus.text = "Nem sikerült a sztereó konfiguráció."
+                                tvStatus.text = "A sztereó konfiguráció nem sikerült."
                             }
                         }
                     },
@@ -276,31 +315,49 @@ class StereoCaptureActivity : AppCompatActivity() {
 
         if (mainData != null && teleData != null) {
             runOnUiThread {
-                tvStatus.text = "Képillesztés és kivágás (Crop Match: 2.79×)..."
+                tvStatus.text = "Képillesztés, kivágás és 3D Side-by-Side összefűzés..."
             }
 
-            // 1. Telefotó feldolgozása (Jobb szem, 67mm)
+            // 1. Telefotó feldolgozása (Jobb szem, 67mm natív)
             val teleBitmap = BitmapFactory.decodeByteArray(teleData, 0, teleData.size)
 
-            // 2. Főkamera feldolgozása (2.79x központi kivágás, hogy megegyezzen a témaméret)
+            // 2. Főkamera feldolgozása (2.79x központi kivágás a témaméret egyezéshez)
             val rawMainBitmap = BitmapFactory.decodeByteArray(mainData, 0, mainData.size)
             val croppedMainBitmap = cropToMatchTelephoto(rawMainBitmap, FOCAL_CROP_RATIO, teleBitmap.width, teleBitmap.height)
 
-            // 3. Mentés DCIM/Stereo3D könyvtárba
+            // 3. Automatikus összefűzés egyetlen Side-by-Side (SBS) sztereó képre!
+            val sbsBitmap = createSideBySideBitmap(croppedMainBitmap, teleBitmap)
+
+            // 4. Mentés DCIM/Stereo3D könyvtárba
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val filenameSBS = "IMG_${timeStamp}_SBS.jpg"
             val filenameL = "IMG_${timeStamp}_L.jpg"
             val filenameR = "IMG_${timeStamp}_R.jpg"
 
-            saveBitmapToGallery(croppedMainBitmap, filenameL, "S24 Bal Sztereó (Főkamera kivágva)")
-            saveBitmapToGallery(teleBitmap, filenameR, "S24 Jobb Sztereó (3x Telefotó natív)")
+            saveBitmapToGallery(sbsBitmap, filenameSBS, "S24 Összefűzött Side-by-Side 3D Kép (VR / Sztereó)")
+            saveBitmapToGallery(croppedMainBitmap, filenameL, "S24 Bal Sztereó Kép (Főkamera kivágva)")
+            saveBitmapToGallery(teleBitmap, filenameR, "S24 Jobb Sztereó Kép (3x Telefotó natív)")
 
             runOnUiThread {
                 progressBar.visibility = View.GONE
                 btnShutter.isEnabled = true
-                tvStatus.text = "Mentve: $filenameL és $filenameR"
-                Toast.makeText(this, "Sztereó fotópár sikeresen mentve a Galériába!", Toast.LENGTH_LONG).show()
+                tvStatus.text = "Sikeres mentés: $filenameSBS és külön L/R fájlok!"
+                Toast.makeText(this, "Összefűzött SBS 3D kép és L/R képek mentve a Galériába!", Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    /**
+     * Összefűzi a bal és jobb oldali sztereó képeket egyetlen közös képre (Side-by-Side)
+     */
+    private fun createSideBySideBitmap(leftBitmap: Bitmap, rightBitmap: Bitmap): Bitmap {
+        val width = leftBitmap.width + rightBitmap.width
+        val height = Math.max(leftBitmap.height, rightBitmap.height)
+        val composite = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(composite)
+        canvas.drawBitmap(leftBitmap, 0f, 0f, null)
+        canvas.drawBitmap(rightBitmap, leftBitmap.width.toFloat(), 0f, null)
+        return composite
     }
 
     private fun cropToMatchTelephoto(source: Bitmap, zoomFactor: Float, targetWidth: Int, targetHeight: Int): Bitmap {
@@ -350,3 +407,4 @@ class StereoCaptureActivity : AppCompatActivity() {
         imageReaderTele = null
     }
 }
+
