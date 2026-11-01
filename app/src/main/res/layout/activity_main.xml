@@ -26,38 +26,33 @@
         android:layout_marginBottom="32dp" />
 
     <Button
-        android:id="@+id/btnRunDiagnostic"
-        android:layout_width="match_parent"
-        android:layout_height="60dp"
-        android:text="1. Kamera Hardverteszt (Diagnosztika)"
-        android:backgroundTint="#2563EB"
-        android:textColor="#FFFFFF"
-        android:layout_marginBottom="16dp" />
-
-    <Button
         android:id="@+id/btnOpenStereoCam"
         android:layout_width="match_parent"
-        android:layout_height="60dp"
-        android:text="2. Sztereó Fényképező (Fotó és SBS)"
+        android:layout_height="64dp"
+        android:text="1. Sztereó Fényképező (Fotó és SBS)"
         android:backgroundTint="#059669"
         android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:textStyle="bold"
         android:layout_marginBottom="16dp" />
 
     <Button
         android:id="@+id/btnOpenStereoVideo"
         android:layout_width="match_parent"
-        android:layout_height="60dp"
-        android:text="3. Sztereó Videófelvevő (Dupla MP4)"
-        android:backgroundTint="#DC2626"
+        android:layout_height="64dp"
+        android:text="2. Sztereó Videófelvevő (Dupla MP4)"
+        android:backgroundTint="#0284C7"
         android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:textStyle="bold"
         android:layout_marginBottom="24dp" />
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Tipp: A sztereó fotózáshoz tartsa a telefont vízszintesen! Az exponáláskor a főkamera és a 3x telekamera egyszerre készít képet."
-        android:textSize="12sp"
-        android:textColor="#6B7280"
+        android:text="Tipp: A sztereó felvételhez tartsa a telefont vízszintesen! A főkamera és a 3x telekamera egyszerre rögzít."
+        android:textSize="13sp"
+        android:textColor="#9CA3AF"
         android:gravity="center" />
 
 </LinearLayout>

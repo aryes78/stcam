@@ -17,6 +17,7 @@
 
     <application
         android:allowBackup="true"
+        android:largeHeap="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -34,14 +35,7 @@
             </intent-filter>
         </activity>
 
-        <!-- 1. Lépés: S24 Multi-Kamera Hardveres Diagnosztika & Tesztelő -->
-        <activity
-            android:name=".CameraTesterActivity"
-            android:exported="false"
-            android:label="S24 Kamera Hardverteszt"
-            android:screenOrientation="portrait" />
-
-        <!-- 2. Lépés: Valós idejű Vízszintes Sztereó Fényképező & SBS készítő -->
+        <!-- 1. Sztereó Fényképező (Fotó és 3D Side-by-Side SBS) -->
         <activity
             android:name=".StereoCaptureActivity"
             android:exported="false"
@@ -49,7 +43,7 @@
             android:screenOrientation="landscape"
             android:configChanges="orientation|screenSize" />
 
-        <!-- 3. Lépés: Valós idejű Vízszintes Sztereó Videófelvevő (Szinkronizált Dupla MP4) -->
+        <!-- 2. Sztereó Videófelvevő (Szinkronizált Dupla MP4) -->
         <activity
             android:name=".StereoVideoActivity"
             android:exported="false"

@@ -314,35 +314,60 @@ class StereoCaptureActivity : AppCompatActivity() {
         val teleData = capturedTeleBytes
 
         if (mainData != null && teleData != null) {
-            runOnUiThread {
-                tvStatus.text = "Képillesztés, kivágás és 3D Side-by-Side összefűzés..."
-            }
+            backgroundHandler.post {
+                try {
+                    runOnUiThread {
+                        tvStatus.text = "Képillesztés, 2.79x kivágás és 3D Side-by-Side összefűzés..."
+                    }
 
-            // 1. Telefotó feldolgozása (Jobb szem, 67mm natív)
-            val teleBitmap = BitmapFactory.decodeByteArray(teleData, 0, teleData.size)
+                    // 1. Telefotó feldolgozása (Jobb szem, 67mm natív 3x)
+                    val teleBitmap = BitmapFactory.decodeByteArray(teleData, 0, teleData.size)
+                        ?: throw IllegalStateException("Telefotó kép dekódolása sikertelen")
 
-            // 2. Főkamera feldolgozása (2.79x központi kivágás a témaméret egyezéshez)
-            val rawMainBitmap = BitmapFactory.decodeByteArray(mainData, 0, mainData.size)
-            val croppedMainBitmap = cropToMatchTelephoto(rawMainBitmap, FOCAL_CROP_RATIO, teleBitmap.width, teleBitmap.height)
+                    // 2. Főkamera feldolgozása (2.79x központi kivágás a témaméret egyezéshez)
+                    val rawMainBitmap = BitmapFactory.decodeByteArray(mainData, 0, mainData.size)
+                        ?: throw IllegalStateException("Főkamera kép dekódolása sikertelen")
 
-            // 3. Automatikus összefűzés egyetlen Side-by-Side (SBS) sztereó képre!
-            val sbsBitmap = createSideBySideBitmap(croppedMainBitmap, teleBitmap)
+                    val croppedMainBitmap = cropToMatchTelephoto(rawMainBitmap, FOCAL_CROP_RATIO, teleBitmap.width, teleBitmap.height)
+                    // Azonnali memóriafelszabadítás a nyers képből a nagy SBS kép előtt
+                    rawMainBitmap.recycle()
 
-            // 4. Mentés DCIM/Stereo3D könyvtárba
-            val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-            val filenameSBS = "IMG_${timeStamp}_SBS.jpg"
-            val filenameL = "IMG_${timeStamp}_L.jpg"
-            val filenameR = "IMG_${timeStamp}_R.jpg"
+                    // 3. Automatikus összefűzés egyetlen Side-by-Side (SBS) sztereó képre!
+                    val sbsBitmap = createSideBySideBitmap(croppedMainBitmap, teleBitmap)
 
-            saveBitmapToGallery(sbsBitmap, filenameSBS, "S24 Összefűzött Side-by-Side 3D Kép (VR / Sztereó)")
-            saveBitmapToGallery(croppedMainBitmap, filenameL, "S24 Bal Sztereó Kép (Főkamera kivágva)")
-            saveBitmapToGallery(teleBitmap, filenameR, "S24 Jobb Sztereó Kép (3x Telefotó natív)")
+                    // 4. Mentés DCIM/Stereo3D könyvtárba
+                    val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+                    val filenameSBS = "IMG_${timeStamp}_SBS.jpg"
+                    val filenameL = "IMG_${timeStamp}_L.jpg"
+                    val filenameR = "IMG_${timeStamp}_R.jpg"
 
-            runOnUiThread {
-                progressBar.visibility = View.GONE
-                btnShutter.isEnabled = true
-                tvStatus.text = "Sikeres mentés: $filenameSBS és külön L/R fájlok!"
-                Toast.makeText(this, "Összefűzött SBS 3D kép és L/R képek mentve a Galériába!", Toast.LENGTH_LONG).show()
+                    saveBitmapToGallery(sbsBitmap, filenameSBS, "S24 Összefűzött Side-by-Side 3D Kép (VR / Sztereó)")
+                    saveBitmapToGallery(croppedMainBitmap, filenameL, "S24 Bal Sztereó Kép (Főkamera 2.79x kivágva)")
+                    saveBitmapToGallery(teleBitmap, filenameR, "S24 Jobb Sztereó Kép (3x Telefotó natív)")
+
+                    // Bitmap memóriák azonnali felszabadítása
+                    sbsBitmap.recycle()
+                    croppedMainBitmap.recycle()
+                    teleBitmap.recycle()
+
+                    runOnUiThread {
+                        progressBar.visibility = View.GONE
+                        btnShutter.isEnabled = true
+                        tvStatus.text = "Sikeres mentés: $filenameSBS és külön L/R fájlok a Galériában!"
+                        Toast.makeText(this@StereoCaptureActivity, "Összefűzött SBS 3D kép és L/R képek mentve a Galériába!", Toast.LENGTH_LONG).show()
+                    }
+                } catch (e: Throwable) {
+                    e.printStackTrace()
+                    runOnUiThread {
+                        progressBar.visibility = View.GONE
+                        btnShutter.isEnabled = true
+                        tvStatus.text = "Feldolgozási hiba: ${e.message}"
+                        Toast.makeText(this@StereoCaptureActivity, "Hiba az összefűzésnél: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                } finally {
+                    capturedMainBytes = null
+                    capturedTeleBytes = null
+                }
             }
         }
     }

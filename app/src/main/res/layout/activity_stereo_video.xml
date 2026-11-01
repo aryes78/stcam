@@ -4,26 +4,22 @@
     android:layout_height="match_parent"
     android:background="#000000">
 
-    <!-- Dupla előnézet: Bal oldal Főkamera (2.79x hardveres zoom), Jobb oldal Telekamera (3x natív) -->
+    <!-- Dupla előnézet: Bal oldal Főkamera (Bal szem), Jobb oldal Telekamera (Jobb szem, 3x) -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="horizontal">
 
-        <!-- Bal oldal: Főkamera 2.79x-es méretillesztéssel -->
+        <!-- Bal oldal: Főkamera -->
         <FrameLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:clipChildren="true"
-            android:clipToPadding="true">
+            android:layout_weight="1">
 
             <SurfaceView
                 android:id="@+id/surfaceViewMain"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:scaleX="2.79"
-                android:scaleY="2.79" />
+                android:layout_height="match_parent" />
 
             <TextView
                 android:id="@+id/tvBadgeWide"
@@ -36,7 +32,7 @@
                 android:paddingRight="10dp"
                 android:paddingTop="4dp"
                 android:paddingBottom="4dp"
-                android:text="BAL: FŐKAMERA (2.79x ZOOM)"
+                android:text="BAL: FŐKAMERA"
                 android:textColor="#38BDF8"
                 android:textSize="11sp"
                 android:textStyle="bold" />

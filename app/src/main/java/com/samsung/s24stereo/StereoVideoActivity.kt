@@ -105,13 +105,6 @@ class StereoVideoActivity : AppCompatActivity() {
         tvBadgeTele = findViewById(R.id.tvBadgeTele)
         progressBar = findViewById(R.id.progressBar)
 
-        Thread.setDefaultUncaughtExceptionHandler { _, e ->
-            e.printStackTrace()
-            runOnUiThread {
-                Toast.makeText(applicationContext, "Hiba: ${e.message}", Toast.LENGTH_LONG).show()
-            }
-        }
-
         cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
         detectPhysicalCameraIds()
 
@@ -127,8 +120,6 @@ class StereoVideoActivity : AppCompatActivity() {
     }
 
     private fun initSurfaceHolders() {
-        // Fix felbontás beállítása a "Surface abandoned" hiba megelőzésére
-        surfaceViewMain.holder.setFixedSize(1280, 720)
         surfaceViewMain.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 isSurfaceMainReady = true
@@ -137,11 +128,9 @@ class StereoVideoActivity : AppCompatActivity() {
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {}
             override fun surfaceDestroyed(holder: SurfaceHolder) {
                 isSurfaceMainReady = false
-                closeCameraSystem()
             }
         })
 
-        surfaceViewTele.holder.setFixedSize(1280, 720)
         surfaceViewTele.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 isSurfaceTeleReady = true
@@ -150,7 +139,6 @@ class StereoVideoActivity : AppCompatActivity() {
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {}
             override fun surfaceDestroyed(holder: SurfaceHolder) {
                 isSurfaceTeleReady = false
-                closeCameraSystem()
             }
         })
     }
@@ -188,7 +176,7 @@ class StereoVideoActivity : AppCompatActivity() {
             widePhysicalId = "5"
             telePhysicalId = "6"
         }
-        tvBadgeWide.text = "BAL: FŐKAMERA [$widePhysicalId] (ISP 2.79x ZOOM)"
+        tvBadgeWide.text = "BAL: FŐKAMERA [$widePhysicalId]"
         tvBadgeTele.text = "JOBB: TELE [$telePhysicalId] (3x NATÍV)"
     }
 
@@ -222,7 +210,9 @@ class StereoVideoActivity : AppCompatActivity() {
     }
 
     private fun openStereoCameraSystem() {
-        tvStatus.text = "Kamera előkészítése videóhoz..."
+        runOnUiThread {
+            tvStatus.text = "Kamera előkészítése videóhoz..."
+        }
         try {
             cameraManager.openCamera("0", object : CameraDevice.StateCallback() {
                 override fun onOpened(camera: CameraDevice) {
@@ -238,11 +228,15 @@ class StereoVideoActivity : AppCompatActivity() {
                 override fun onError(camera: CameraDevice, error: Int) {
                     camera.close()
                     cameraDevice = null
-                    tvStatus.text = "Kamera hiba: $error"
+                    runOnUiThread {
+                        tvStatus.text = "Kamera hiba: $error"
+                    }
                 }
             }, backgroundHandler)
         } catch (e: SecurityException) {
-            tvStatus.text = "Kamera engedély hiányzik!"
+            runOnUiThread {
+                tvStatus.text = "Kamera engedély hiányzik!"
+            }
         }
     }
 
@@ -267,12 +261,11 @@ class StereoVideoActivity : AppCompatActivity() {
                                     addTarget(surfaceMain)
                                     addTarget(surfaceTele)
                                     set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-                                    set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
                                 }.build()
 
                                 session.setRepeatingRequest(previewRequest, null, backgroundHandler)
                                 runOnUiThread {
-                                    tvStatus.text = "S24 Sztereó Videó Előnézet Kész (Bal 2.79x zoom + Jobb 3x)"
+                                    tvStatus.text = "S24 Sztereó Videó Előnézet Kész (1x Fő + 3x Tele)"
                                     btnRecord.isEnabled = true
                                 }
                             } catch (e: Exception) {
@@ -368,7 +361,6 @@ class StereoVideoActivity : AppCompatActivity() {
                                     addTarget(recWideSurface)
                                     addTarget(recTeleSurface)
                                     set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-                                    set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
                                 }.build()
 
                                 session.setRepeatingRequest(recordRequest, null, backgroundHandler)
@@ -408,8 +400,10 @@ class StereoVideoActivity : AppCompatActivity() {
             }
 
         } catch (e: Throwable) {
-            tvStatus.text = "Videó hiba: ${e.message}"
-            btnRecord.isEnabled = true
+            runOnUiThread {
+                tvStatus.text = "Videó hiba: ${e.message}"
+                btnRecord.isEnabled = true
+            }
             startStereoPreviewSession()
         }
     }

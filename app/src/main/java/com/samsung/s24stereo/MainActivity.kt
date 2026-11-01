@@ -23,16 +23,11 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        val btnRunDiagnostic = findViewById<Button>(R.id.btnRunDiagnostic)
         val btnOpenStereoCam = findViewById<Button>(R.id.btnOpenStereoCam)
         val btnOpenStereoVideo = findViewById<Button>(R.id.btnOpenStereoVideo)
         val tvDeviceInfo = findViewById<TextView>(R.id.tvDeviceInfo)
 
         tvDeviceInfo.text = "Eszköz: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} (Android ${android.os.Build.VERSION.RELEASE})"
-
-        btnRunDiagnostic.setOnClickListener {
-            checkPermissionsAndLaunch(CameraTesterActivity::class.java)
-        }
 
         btnOpenStereoCam.setOnClickListener {
             checkPermissionsAndLaunch(StereoCaptureActivity::class.java)
