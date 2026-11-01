@@ -25,47 +25,13 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Build Debug APK (with subfolder detection & fallback)
+      - name: Build Debug APK
         run: |
-          # 1. Ha a projekt almappában van, automatikus belépés
-          if [ ! -f "build.gradle.kts" ]; then
-            for d in */ ; do
-              if [ -f "${d}build.gradle.kts" ]; then
-                echo "Projekt megtalálva: $d, belépés..."
-                cd "$d"
-                break
-              fi
-            done
+          if [ ! -f "gradlew" ] && [ -d "SamsungS24StereoCamera" ]; then
+            cd SamsungS24StereoCamera
           fi
-
-          echo "Aktuális munkakönyvtár: $(pwd)"
-          ls -la
-
-          # 2. Automatikus XML entitás szanálás Pythonnal (100% hibabiztos)
-          python3 -c "
-import glob
-for f in glob.glob('**/*.xml', recursive=True):
-    try:
-        with open(f, 'r', encoding='utf-8') as fp:
-            text = fp.read()
-        new_text = text.replace('Fotó & SBS', 'Fotó és SBS').replace(' & ', ' &amp; ')
-        if new_text != text:
-            with open(f, 'w', encoding='utf-8') as fp:
-                fp.write(new_text)
-            print('XML szanálva: ' + f)
-    except Exception:
-        pass
-"
-
-          # 3. Fordítás futtatása
-          if [ -f "./gradlew" ]; then
-            echo "✓ ./gradlew megtalálva, végrehajtási jog megadása..."
-            chmod +x ./gradlew
-            ./gradlew assembleDebug --stacktrace
-          else
-            echo "ℹ Globális Gradle használata..."
-            gradle assembleDebug --stacktrace
-          fi
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
